@@ -1330,7 +1330,7 @@ pub struct MasterKvRouterInner {
     /// It is updated through async follow-up maintenance, so it does not guarantee
     /// immediate strong-consistency visibility for a freshly committed put.
     /// The generic surface is `CountPrefix` RPC; the current primary use case is
-    /// MQ capacity backpressure / prefix counting.
+    /// KV capacity control and prefix counting.
     pub prefix_index: ARwLock<PrefixRadixTree>,
 
     /// Support replicas: node_id -> key -> route_info

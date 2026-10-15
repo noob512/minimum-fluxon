@@ -68,7 +68,7 @@ pub fn debug_keepalive_log(lease_id: u64, note: impl AsRef<str>) {
 /// - `lease_id`: the numerical lease id
 /// - `register_by`: optional human-readable label recorded at registration
 ///   time via `record_register_by()`; callers can use a convention like
-///   "mpsc_*:chan_id=…" to attribute leases to a specific channel
+///   a stable caller label to attribute leases to a specific KV client
 pub fn snapshot_active_lease_debug() -> Vec<(i64, LeaseBackendUid, u64, Option<String>)> {
     // Iterate all TTL actors and flatten their registries.
     // AutoCleanMap::snapshot_map only reads strong entries; dropped
@@ -148,7 +148,7 @@ fn acquire_existing_backend_handle(uid: &LeaseBackendUid) -> Option<LeaseBackend
 
 /// Clone the client owned by a live registered etcd backend.
 ///
-/// MPMC subchannels use this contract after their parent member lease has
+/// Nested KV clients use this contract after their parent lease has
 /// registered the backend. Failing here exposes an ownership-ordering bug
 /// instead of silently opening one connection per subchannel.
 pub fn registered_etcd_client(uid: &LeaseBackendUid) -> AnyResult<Client> {
@@ -204,10 +204,10 @@ fn register_periodic_keepalive(
         .register_replacing(
             key.clone(),
             operation,
-            LeaseKeepaliveFailurePolicy::RetryAfter(keepalive_actor::MQ_KEEPALIVE_RETRY_DELAY),
+            LeaseKeepaliveFailurePolicy::RetryAfter(keepalive_actor::LEASE_KEEPALIVE_RETRY_DELAY),
             on_failure,
         )
-        .expect("new MQ lease registry entry must own a unique keepalive registration")
+        .expect("new lease registry entry must own a unique keepalive registration")
 }
 
 fn actor_map() -> &'static AutoCleanMap<LeaseActorMapKey, Arc<OneTtlKeepAliveInner>> {
@@ -702,7 +702,7 @@ mod tests {
             .expect("caller-validated pooled etcd registration");
 
             registered_etcd_client(&backend_uid)
-                .expect("MPMC subchannels must synchronously reuse the parent etcd client");
+                .expect("nested KV clients must synchronously reuse the parent etcd client");
 
             let expected_pool_entry = etcd_clients_pool().acquire(endpoints);
             let backend_handle = acquire_existing_backend_handle(&backend_uid)

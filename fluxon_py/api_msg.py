@@ -119,7 +119,7 @@ def deserialize_message(data: bytes) -> Result[MessageType, ApiError]:
     Deserialize a message from the custom wire format.
 
     Unified error handling: any parse failure returns Result.error(MsgDeserializeError)
-    and does not raise. This lets callers (e.g. MPSC consumer) branch on Result
+    and does not raise. This lets callers branch on Result
     consistently without crashes from JSONDecodeError or similar exceptions.
     """
     # Length validation

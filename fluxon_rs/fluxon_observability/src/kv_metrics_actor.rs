@@ -14,13 +14,9 @@ use fluxon_util::prom_remote_write::{
 };
 
 use crate::keys::{
-    PROM_LABEL_COMPONENT, PROM_LABEL_FS_IO_OP, PROM_LABEL_FS_MOUNT_KIND,
-    PROM_LABEL_FS_MOUNTPOINT_DIR_ABS, PROM_LABEL_FS_TARGET_DIR_ABS, PROM_LABEL_METRIC,
     PROM_LABEL_NODE, PROM_LABEL_PEER, PROM_LABEL_RDMA_DEVICE, PROM_LABEL_RDMA_NETDEV,
     PROM_LABEL_RDMA_PCI_BDF, PROM_LABEL_RDMA_PORT, PROM_LABEL_RDMA_TRANSFER_STATE, PROM_LABEL_ROLE,
     PROM_LABEL_STAT, PROM_LABEL_TCP_THREAD_LANE, PROM_METRIC_CONTAINER_MEMORY_LIMIT_BYTES,
-    PROM_METRIC_CONTAINER_MEMORY_USAGE_BYTES, PROM_METRIC_FS_IO_OPS_TOTAL,
-    PROM_METRIC_FS_MOUNT_FS_TOTAL_BYTES, PROM_METRIC_FS_MOUNT_FS_USED_BYTES,
     PROM_METRIC_KV_PEER_NETWORK_BYTES_TOTAL, PROM_METRIC_P2P_RECV_TRANSPORT_BYTES_TOTAL,
     PROM_METRIC_P2P_RECV_TRANSPORT_MESSAGES_TOTAL, PROM_METRIC_P2P_RPC_COMPLETION_BYTES_TOTAL,
     PROM_METRIC_P2P_RPC_COMPLETION_LATENCY_SAMPLE_COUNT,
@@ -61,7 +57,6 @@ use crate::keys::{
 };
 
 use crate::prom_remote_write_actor::PromRemoteWriteHandle;
-use crate::types::FsMountKind;
 
 // The actor owns all "gather + build extra series + submit to remote-write actor" logic.
 // KV/business code should only do leaf-ish `try_send` into this actor.
@@ -167,21 +162,6 @@ impl ObserveComponent {
             ObserveComponent::RpcTransport => 0,
             ObserveComponent::TransferEngine => 1,
             ObserveComponent::LocalIpc => 2,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ObserveFsIoOp {
-    Read,
-    Write,
-}
-
-impl ObserveFsIoOp {
-    pub const fn as_label(self) -> &'static str {
-        match self {
-            ObserveFsIoOp::Read => "read",
-            ObserveFsIoOp::Write => "write",
         }
     }
 }
@@ -842,10 +822,6 @@ pub enum ObserveOp {
         direction: ObserveDirection,
         bytes: u64,
     },
-    RecordFsIoOps {
-        op: ObserveFsIoOp,
-        ops: u64,
-    },
     RecordTcpThreadLatencySample {
         sample: ObserveTcpThreadLatencySample,
     },
@@ -875,19 +851,6 @@ pub enum ObserveOp {
         node: String,
         device: String,
         bytes: u64,
-    },
-    SetFsMountFsBytes {
-        mount_kind: FsMountKind,
-        target_dir_abs: String,
-        mountpoint_dir_abs: String,
-        used_bytes: u64,
-        total_bytes: u64,
-    },
-    SetShmFileBytes {
-        shm_dir_abs: String,
-        file_path_abs: String,
-        logical_size_bytes: u64,
-        allocated_bytes: u64,
     },
     ReplaceSelfRdmaSnapshot {
         snapshot: ObserveRdmaSnapshot,
@@ -1098,21 +1061,6 @@ impl ObserveHandle {
             );
         }
     }
-
-    pub fn set_shm_file_bytes(
-        &self,
-        shm_dir_abs: &str,
-        file_path_abs: &str,
-        logical_size_bytes: u64,
-        allocated_bytes: u64,
-    ) {
-        self.try_submit(ObserveOp::SetShmFileBytes {
-            shm_dir_abs: shm_dir_abs.to_string(),
-            file_path_abs: file_path_abs.to_string(),
-            logical_size_bytes,
-            allocated_bytes,
-        });
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1171,11 +1119,6 @@ pub struct KvMetricsActorOwned {
     tokio_busy_percent_gauge: GaugeVec,
     tokio_max_worker_busy_percent_gauge: GaugeVec,
     tokio_park_unpark_rate_gauge: GaugeVec,
-    fs_mount_fs_used_bytes_gauge: GaugeVec,
-    fs_mount_fs_total_bytes_gauge: GaugeVec,
-    shm_file_size_bytes_gauge: GaugeVec,
-    shm_file_allocated_bytes_gauge: GaugeVec,
-    fs_io_ops_counter: CounterVec,
     exporter_heartbeat_gauge: GaugeVec,
     node_uptime_counter: CounterVec,
     segment_capacity_gauge: GaugeVec,
@@ -1536,73 +1479,6 @@ impl KvMetricsActorOwned {
         )
         .expect("tokio park/unpark rate gauge");
 
-        let fs_mount_fs_used_bytes_gauge = GaugeVec::new(
-            Opts::new(
-                PROM_METRIC_FS_MOUNT_FS_USED_BYTES,
-                "Used bytes for the filesystem containing a user-facing FS mount dir (statvfs)",
-            ),
-            &[
-                PROM_LABEL_NODE,
-                PROM_LABEL_ROLE,
-                PROM_LABEL_FS_MOUNT_KIND,
-                PROM_LABEL_FS_TARGET_DIR_ABS,
-                PROM_LABEL_FS_MOUNTPOINT_DIR_ABS,
-            ],
-        )
-        .expect("fs mount fs used bytes gauge");
-
-        let fs_mount_fs_total_bytes_gauge = GaugeVec::new(
-            Opts::new(
-                PROM_METRIC_FS_MOUNT_FS_TOTAL_BYTES,
-                "Total bytes for the filesystem containing a user-facing FS mount dir (statvfs)",
-            ),
-            &[
-                PROM_LABEL_NODE,
-                PROM_LABEL_ROLE,
-                PROM_LABEL_FS_MOUNT_KIND,
-                PROM_LABEL_FS_TARGET_DIR_ABS,
-                PROM_LABEL_FS_MOUNTPOINT_DIR_ABS,
-            ],
-        )
-        .expect("fs mount fs total bytes gauge");
-
-        let shm_file_size_bytes_gauge = GaugeVec::new(
-            Opts::new(
-                PROM_METRIC_SHM_FILE_SIZE_BYTES,
-                "Logical file size in bytes for files under the shared memory root",
-            ),
-            &[
-                PROM_LABEL_NODE,
-                PROM_LABEL_ROLE,
-                "shm_dir_abs",
-                "file_path_abs",
-            ],
-        )
-        .expect("shm file size bytes gauge");
-
-        let shm_file_allocated_bytes_gauge = GaugeVec::new(
-            Opts::new(
-                PROM_METRIC_SHM_FILE_ALLOCATED_BYTES,
-                "Allocated bytes (st_blocks * 512) for files under the shared memory root",
-            ),
-            &[
-                PROM_LABEL_NODE,
-                PROM_LABEL_ROLE,
-                "shm_dir_abs",
-                "file_path_abs",
-            ],
-        )
-        .expect("shm file allocated bytes gauge");
-
-        let fs_io_ops_counter = CounterVec::new(
-            Opts::new(
-                PROM_METRIC_FS_IO_OPS_TOTAL,
-                "Total FluxonFS I/O operations (path-agnostic), attributed by (node, role, fs_io_op)",
-            ),
-            &[PROM_LABEL_NODE, PROM_LABEL_ROLE, PROM_LABEL_FS_IO_OP],
-        )
-        .expect("fs io ops counter");
-
         let exporter_heartbeat_gauge = GaugeVec::new(
             Opts::new(
                 "exporter_heartbeat",
@@ -1858,11 +1734,6 @@ impl KvMetricsActorOwned {
             Box::new(tokio_max_worker_busy_percent_gauge.clone()),
         );
         register_collector(&registry, Box::new(tokio_park_unpark_rate_gauge.clone()));
-        register_collector(&registry, Box::new(fs_mount_fs_used_bytes_gauge.clone()));
-        register_collector(&registry, Box::new(fs_mount_fs_total_bytes_gauge.clone()));
-        register_collector(&registry, Box::new(shm_file_size_bytes_gauge.clone()));
-        register_collector(&registry, Box::new(shm_file_allocated_bytes_gauge.clone()));
-        register_collector(&registry, Box::new(fs_io_ops_counter.clone()));
         register_collector(&registry, Box::new(exporter_heartbeat_gauge.clone()));
         register_collector(&registry, Box::new(node_uptime_counter.clone()));
         register_collector(&registry, Box::new(segment_capacity_gauge.clone()));
@@ -1934,11 +1805,6 @@ impl KvMetricsActorOwned {
             tokio_busy_percent_gauge,
             tokio_max_worker_busy_percent_gauge,
             tokio_park_unpark_rate_gauge,
-            fs_mount_fs_used_bytes_gauge,
-            fs_mount_fs_total_bytes_gauge,
-            shm_file_size_bytes_gauge,
-            shm_file_allocated_bytes_gauge,
-            fs_io_ops_counter,
             exporter_heartbeat_gauge,
             node_uptime_counter,
             segment_capacity_gauge,
@@ -2137,18 +2003,6 @@ impl KvMetricsActorOwned {
                     ])
                     .inc_by(bytes as f64);
             }
-            ObserveOp::RecordFsIoOps { op, ops } => {
-                if ops == 0 {
-                    return;
-                }
-                self.fs_io_ops_counter
-                    .with_label_values(&[
-                        self.node_id.as_str(),
-                        self.node_role.as_str(),
-                        op.as_label(),
-                    ])
-                    .inc_by(ops as f64);
-            }
             ObserveOp::RecordTcpThreadLatencySample { sample } => {
                 self.received_tcp_thread_latency_sample_count = self
                     .received_tcp_thread_latency_sample_count
@@ -2225,55 +2079,6 @@ impl KvMetricsActorOwned {
                 self.kv_ssd_used_gauge
                     .with_label_values(&[&node, &device])
                     .set(bytes as f64);
-            }
-            ObserveOp::SetFsMountFsBytes {
-                mount_kind,
-                target_dir_abs,
-                mountpoint_dir_abs,
-                used_bytes,
-                total_bytes,
-            } => {
-                self.fs_mount_fs_used_bytes_gauge
-                    .with_label_values(&[
-                        self.node_id.as_str(),
-                        self.node_role.as_str(),
-                        mount_kind.as_str(),
-                        target_dir_abs.as_str(),
-                        mountpoint_dir_abs.as_str(),
-                    ])
-                    .set(used_bytes as f64);
-                self.fs_mount_fs_total_bytes_gauge
-                    .with_label_values(&[
-                        self.node_id.as_str(),
-                        self.node_role.as_str(),
-                        mount_kind.as_str(),
-                        target_dir_abs.as_str(),
-                        mountpoint_dir_abs.as_str(),
-                    ])
-                    .set(total_bytes as f64);
-            }
-            ObserveOp::SetShmFileBytes {
-                shm_dir_abs,
-                file_path_abs,
-                logical_size_bytes,
-                allocated_bytes,
-            } => {
-                self.shm_file_size_bytes_gauge
-                    .with_label_values(&[
-                        self.node_id.as_str(),
-                        self.node_role.as_str(),
-                        shm_dir_abs.as_str(),
-                        file_path_abs.as_str(),
-                    ])
-                    .set(logical_size_bytes as f64);
-                self.shm_file_allocated_bytes_gauge
-                    .with_label_values(&[
-                        self.node_id.as_str(),
-                        self.node_role.as_str(),
-                        shm_dir_abs.as_str(),
-                        file_path_abs.as_str(),
-                    ])
-                    .set(allocated_bytes as f64);
             }
             ObserveOp::ReplaceSelfRdmaSnapshot { snapshot } => {
                 self.replace_self_rdma_snapshot(snapshot);
@@ -2856,8 +2661,6 @@ impl KvMetricsActorOwned {
                         self.flush_p2p_rpc_completion_accumulator();
                     let pending_p2p_rpc_completion_buckets =
                         p2p_rpc_completion_counter_summaries.len();
-                    self.shm_file_size_bytes_gauge.reset();
-                    self.shm_file_allocated_bytes_gauge.reset();
                     self.tick_sample_system_metrics();
                     let operation_summaries =
                         self.tick_compute_and_set_operation_stats(&self.pending_kv_op_metrics);

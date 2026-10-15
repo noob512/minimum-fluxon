@@ -816,7 +816,7 @@ class MooncakeStore(KvClient):
         """Mooncake backend does not support prefix counting.
 
         This API is primarily used for the unified Fluxon backend to
-        implement MQ-style capacity checks. For Mooncake, return a
+        implement capacity checks. For Mooncake, return a
         clear error so callers can fall back or disable the feature.
         """
         return Result.new_error(
@@ -835,7 +835,7 @@ class MooncakeStore(KvClient):
     def get_cluster_name(self) -> str:
         cluster = self._config.fluxonkv_spec_cluster_name
         if cluster is None:
-            raise InvalidConfigurationError(message="fluxonkv_spec.cluster_name is required for channel APIs")
+            raise InvalidConfigurationError(message="fluxonkv_spec.cluster_name is required for Fluxon KV")
         return str(cluster)
 
     def get_etcd_config(self) -> List[str]:
@@ -854,17 +854,13 @@ class MooncakeStore(KvClient):
             )
         )
 
-    def ensure_zero_contribution_for_channel(self) -> None:
-        self._config.ensure_zero_contribution_for_channel()
-
-
 class SimpleMemHolder(MemHolder):
-    """Simple implementation of MemHolder for Mooncake backend."""
-    
+    """Simple implementation of MemHolder for the Mooncake backend."""
+
     def __init__(self, data: bytes):
         self._data = data
         self._holder_id = id(self)
-    
+
     def access(self) -> Result[Dict[str, Union[int, float, bool, str, bytes, DLPacked]], ApiError]:
         decoded = decode_flat_kv_dict(self._data)
         if not decoded.is_ok():

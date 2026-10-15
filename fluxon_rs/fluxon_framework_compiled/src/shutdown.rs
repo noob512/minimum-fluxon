@@ -589,7 +589,9 @@ mod tests {
     #[tokio::test]
     async fn pre_shutdown_retains_owner_across_failed_attempt() {
         let barrier = Arc::new(PreShutdownBarrier::new());
-        let mut participant = barrier.register("fs").expect("register FS dependent");
+        let mut participant = barrier
+            .register("storage")
+            .expect("register storage dependent");
         let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
         let owner = tokio::spawn(async move {
             participant

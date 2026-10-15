@@ -2,109 +2,6 @@ use pyo3::PyErr;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-// Re-export the core MPSC error type for callers who want to depend on a single error hub.
-pub use fluxon_mq::MpscError as CoreMpscErrorReExport;
-
-// NOTE: We avoid a central conversion function. Instead, expose explicit
-// constructors for each Python-side error we need to raise from Rust.
-
-fn api_ext_module(py: Python<'_>) -> Bound<'_, PyModule> {
-    // Build errors from fluxon_py.api_error (ApiError subclasses)
-    py.import_bound("fluxon_py.api_error").unwrap()
-}
-
-fn build_ext_error(
-    py: Python<'_>,
-    class_name: &str,
-    message: &str,
-    fill: impl FnOnce(&Bound<'_, PyDict>),
-) -> PyErr {
-    let m = api_ext_module(py);
-    let cls = m.getattr(class_name).unwrap();
-    let kwargs = PyDict::new_bound(py);
-    kwargs.set_item("message", message).unwrap();
-    fill(&kwargs);
-    let inst = cls.call((), Some(&kwargs)).unwrap();
-    // PyO3 0.21+ exposes `from_value_bound` for creating a PyErr from a Bound<PyAny>.
-    // `from_value` no longer exists (or has a different signature), which caused E0599/E0061.
-    // Use the bound variant directly to match the current API.
-    PyErr::from_value_bound(inst)
-}
-
-// Explicit Python-side ApiError constructors (return PyErr ready to raise)
-pub(crate) fn pyerr_message_consumption_no_new_message(
-    py: Python<'_>,
-    message: &str,
-    channel_id: i64,
-    producer_idx: Option<&str>,
-    message_id: Option<i64>,
-) -> PyErr {
-    build_ext_error(py, "MessageConsumptionNoNewMessageError", message, |kw| {
-        kw.set_item("channel_id", channel_id).unwrap();
-        if let Some(p) = producer_idx {
-            kw.set_item("producer_idx", p).unwrap();
-        }
-        if let Some(id) = message_id {
-            kw.set_item("message_id", id).unwrap();
-        }
-    })
-}
-
-pub(crate) fn pyerr_message_consumption(
-    py: Python<'_>,
-    message: &str,
-    channel_id: i64,
-    producer_idx: Option<&str>,
-    message_id: Option<i64>,
-) -> PyErr {
-    build_ext_error(py, "MessageConsumptionError", message, |kw| {
-        kw.set_item("channel_id", channel_id).unwrap();
-        if let Some(p) = producer_idx {
-            kw.set_item("producer_idx", p).unwrap();
-        }
-        if let Some(id) = message_id {
-            kw.set_item("message_id", id).unwrap();
-        }
-    })
-}
-
-pub(crate) fn pyerr_chan_message_produce(
-    py: Python<'_>,
-    message: &str,
-    chan_id: i64,
-    producer_idx: Option<&str>,
-    message_id: Option<i64>,
-) -> PyErr {
-    build_ext_error(py, "ChanMessageProduceError", message, |kw| {
-        kw.set_item("chan_id", chan_id).unwrap();
-        if let Some(p) = producer_idx {
-            kw.set_item("producer_idx", p).unwrap();
-        }
-        if let Some(id) = message_id {
-            kw.set_item("message_id", id).unwrap();
-        }
-    })
-}
-
-// System/bridge category constructors (distinct helpers for clarity)
-pub(crate) fn pyerr_etcd(py: Python<'_>, message: &str, component: &str) -> PyErr {
-    build_ext_error(py, "EtcdError", message, |kw| {
-        kw.set_item("component", component).unwrap();
-    })
-}
-
-pub(crate) fn pyerr_join_error(py: Python<'_>, message: &str, component: &str) -> PyErr {
-    build_ext_error(py, "JoinError", message, |kw| {
-        kw.set_item("component", component).unwrap();
-    })
-}
-
-pub(crate) fn pyerr_internal(py: Python<'_>, message: &str, component: &str) -> PyErr {
-    build_ext_error(py, "InternalError", message, |kw| {
-        kw.set_item("component", component).unwrap();
-    })
-}
-
 // -------- Base ApiError constructors and Result wrappers (centralized) --------
 
 /// Create Python SUCCESS instance (from fluxon_py.api_error)
@@ -317,24 +214,12 @@ pub(crate) fn new_transfer_block_failed_error(
 pub(crate) fn new_put_done_failed_error(
     py: Python<'_>,
     message: &str,
-    channel_id: Option<i64>,
-    producer_idx: Option<&str>,
-    message_id: Option<i64>,
     detail: Option<&str>,
 ) -> PyObject {
     let api_error_module = py.import_bound("fluxon_py.api_error").unwrap();
     let error_class = api_error_module.getattr("PutDoneFailedError").unwrap();
     let kwargs = PyDict::new_bound(py);
     kwargs.set_item("message", message).unwrap();
-    if let Some(cid) = channel_id {
-        kwargs.set_item("channel_id", cid).unwrap();
-    }
-    if let Some(p) = producer_idx {
-        kwargs.set_item("producer_idx", p).unwrap();
-    }
-    if let Some(mid) = message_id {
-        kwargs.set_item("message_id", mid).unwrap();
-    }
     if let Some(d) = detail {
         kwargs.set_item("detail", d).unwrap();
     }
@@ -384,9 +269,6 @@ pub(crate) fn py_error_from_kv_error(
         KvError::Api(CoreApiError::InvalidPutMasterState { detail }) => new_put_done_failed_error(
             py,
             &format!("{}: InvalidPutMasterState: {}", prefix, detail),
-            None,
-            None,
-            None,
             Some(detail),
         ),
         KvError::Api(CoreApiError::KeyNotFound { key }) => new_key_not_found_error(

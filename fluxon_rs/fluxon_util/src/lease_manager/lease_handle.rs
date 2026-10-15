@@ -74,7 +74,7 @@ impl Drop for GeneralLease {
         }
 
         // Backtraces are useful for lifecycle diagnostics but are expensive in
-        // a large MPMC teardown, so capture them only when debug logging is on.
+        // a large client teardown, so capture them only when debug logging is on.
         let lease_id = self.id();
         let kind_str = match self.kind() {
             LeaseType::Etcd => "Etcd",

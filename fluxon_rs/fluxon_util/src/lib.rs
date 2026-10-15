@@ -1,6 +1,5 @@
 pub mod dag_viz_html;
 pub mod dev_config;
-pub mod fs_statvfs;
 pub mod fs_watch;
 pub mod git_version_build_record;
 pub mod hash;
@@ -44,43 +43,6 @@ pub use log::{
 };
 #[cfg(test)]
 mod test_util_test;
-
-// Registered panel proxy descriptor used by fluxon_cli (/r/<service>/<cluster>/...).
-//
-// Causal chain:
-// - fluxon_cli must proxy multiple business panels without linking to their crates (no dependency cycles).
-// - Therefore the proxy routing contract must be a small, stable, serde-friendly descriptor stored in etcd.
-// - Transport is an enum to avoid stringly-typed divergence across services.
-//
-// Contract:
-// - Publishers must write FluxonCliProxyDescriptorV2 JSON to the key returned by
-//   `fluxon_cli_proxy_desc_etcd_key_v2(service, cluster)`.
-// - Consumers (fluxon_cli) must NOT guess or fallback to other keys/schemas.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum FluxonCliProxyTransportV2 {
-    Http { base_url: String },
-    P2pRpc { node_id: String },
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FluxonCliProxyDescriptorV2 {
-    pub transport: FluxonCliProxyTransportV2,
-    pub allow_prefixes: Vec<String>,
-    pub html_inject: bool,
-}
-
-pub fn fluxon_cli_proxy_desc_etcd_key_v2(service_name: &str, cluster_name: &str) -> String {
-    format!(
-        "/fluxon_cli_proxy/v2/{}/{}/descriptor",
-        service_name, cluster_name
-    )
-}
-
-pub fn fluxon_cli_proxy_desc_etcd_service_prefix_v2(service_name: &str) -> String {
-    format!("/fluxon_cli_proxy/v2/{}/", service_name)
-}
 
 use anyhow::{Result, anyhow, bail};
 use local_ip_address::list_afinet_netifas;

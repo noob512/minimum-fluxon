@@ -4,9 +4,8 @@ use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use fluxon_observability::kv_metrics_actor::{
     KvOpEndBytesPulse as ObserveOpEndBytesPulse, KvOpMetric, KvOpMetricGet, KvOpMetricPut,
-    ObserveDirection, ObserveFsIoOp, ObserveHandle, ObserveOp,
+    ObserveDirection, ObserveHandle, ObserveOp,
 };
-use fluxon_observability::types::FsMountKind;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -119,21 +118,6 @@ impl TrafficDirection {
         match self {
             TrafficDirection::Tx => "tx",
             TrafficDirection::Rx => "rx",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FsIoOp {
-    Read,
-    Write,
-}
-
-impl FsIoOp {
-    pub const fn as_label(self) -> &'static str {
-        match self {
-            FsIoOp::Read => "read",
-            FsIoOp::Write => "write",
         }
     }
 }
@@ -271,57 +255,6 @@ impl MetricsHandle {
             node: node.to_string(),
             device: device.to_string(),
             bytes,
-        });
-    }
-
-    pub fn set_fs_mount_fs_bytes(
-        &self,
-        mount_kind: FsMountKind,
-        target_dir_abs: &str,
-        mountpoint_dir_abs: &str,
-        used_bytes: u64,
-        total_bytes: u64,
-    ) {
-        let Some(observe) = self.observe() else {
-            return;
-        };
-        observe.try_submit(ObserveOp::SetFsMountFsBytes {
-            mount_kind,
-            target_dir_abs: target_dir_abs.to_string(),
-            mountpoint_dir_abs: mountpoint_dir_abs.to_string(),
-            used_bytes,
-            total_bytes,
-        });
-    }
-
-    pub fn set_shm_file_bytes(
-        &self,
-        shm_dir_abs: &str,
-        file_path_abs: &str,
-        logical_size_bytes: u64,
-        allocated_bytes: u64,
-    ) {
-        let Some(observe) = self.observe() else {
-            return;
-        };
-        observe.set_shm_file_bytes(
-            shm_dir_abs,
-            file_path_abs,
-            logical_size_bytes,
-            allocated_bytes,
-        );
-    }
-
-    pub fn record_fs_io_ops(&self, op: FsIoOp, ops: u64) {
-        let Some(observe) = self.observe() else {
-            return;
-        };
-        observe.try_submit(ObserveOp::RecordFsIoOps {
-            op: match op {
-                FsIoOp::Read => ObserveFsIoOp::Read,
-                FsIoOp::Write => ObserveFsIoOp::Write,
-            },
-            ops,
         });
     }
 

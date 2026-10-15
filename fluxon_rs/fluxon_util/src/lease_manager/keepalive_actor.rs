@@ -22,7 +22,7 @@ use tracing::debug;
 
 /// Per-lease keepalive timeout budget for a single task.
 ///
-/// 设计说明（与 review_mq_lease_manager_tuning.md 收敛）：
+/// Keepalive timing is shared by the KV client and etcd lease paths:
 /// - 这里的 timeout 目标是“防止单个 keepalive 调用长期占用公共 actor
 ///   的并发槽位”，而不是“保证在 TTL 过期前一定完成 keepalive”。
 ///   真正的 TTL 守恒由 etcd / kvclient 自身的 lease 语义保障。
@@ -457,7 +457,7 @@ where
     /// already created a new value generation. Its old value can remain alive
     /// for a few instructions after the registry key is removed; replacing the
     /// actor generation closes that drop/recreate window without weakening the
-    /// strict duplicate check used by direct callers such as FluxonFS.
+    /// strict duplicate check used by direct lease callers.
     pub(crate) fn register_replacing(
         self: &Arc<Self>,
         key: K,
@@ -851,7 +851,7 @@ where
     }
 }
 
-/// Composite key for a single lease entry in an MQ keepalive actor.
+/// Composite key for a single lease entry in the keepalive actor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LeaseKey {
     backend_uid: LeaseBackendUid,
@@ -875,8 +875,8 @@ impl LeaseKey {
     }
 }
 
-pub(crate) const MQ_KEEPALIVE_RETRY_DELAY: Duration = Duration::from_millis(100);
-const MQ_KEEPALIVE_MAX_CONCURRENCY: usize = 64;
+pub(crate) const LEASE_KEEPALIVE_RETRY_DELAY: Duration = Duration::from_millis(100);
+const LEASE_KEEPALIVE_MAX_CONCURRENCY: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct LeaseActorMapKey {
@@ -920,7 +920,7 @@ impl OneTtlKeepAliveInner {
                 cadence,
                 Duration::ZERO,
                 Duration::from_millis(KEEPALIVE_ACTOR_OPERATION_BUDGET_MS),
-                MQ_KEEPALIVE_MAX_CONCURRENCY,
+                LEASE_KEEPALIVE_MAX_CONCURRENCY,
                 Arc::new(NeverStopSignal),
             )),
             running_state: Mutex::new(KeepaliveRunnerState {

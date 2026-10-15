@@ -192,7 +192,7 @@ master_ui:
   http_listen_addr: 0.0.0.0:18080
 ```
 
-这个 UI 的实际宿主是 `fluxon_cli` 的 KV monitor web。URL 形状固定为：
+这个 UI 由 KV monitor web 提供。URL 形状固定为：
 
 ```text
 http://<host-ip-or-domain>:18080/view?cluster_name=demo-kv-cluster&member_kind=kv
@@ -232,7 +232,6 @@ api.close() -> Result[OkNone, ApiError]
 - `FluxonKvClientConfig`：配置对象，优先直接从 Python dict 创建，也支持从 YAML 文件加载。
 - `new_store(config: FluxonKvClientConfig) -> Result[KvClient, ApiError]`：创建 KV client 实例。
 - `KvClient`：统一入口，同时提供 KV 读写与节点间调用。
-- `KvClient.third_party_logs_dir() -> Result[str, ApiError]`：返回 Fluxon 分配给第三方 Python 组件的日志根目录。组件应在这个根目录下继续派生自己的子目录，例如 `mq/`。
 - `MemHolder`：`get_blocking(...)` 成功后的读取结果持有者，`access()` 取得 `FlatDict`。
 - `PutOptionalArgs`：`put_blocking(...)` 的可选参数对象，当前常用字段是 `lease_id`。
 
@@ -624,9 +623,8 @@ network:
 | `busy_poll`（owner/master 默认） | reactor 在热窗口内使用零超时 poll，减少唤醒和调度延迟，但会占用更多 CPU。 |
 | `event_driven`（external 默认） | reactor 通过 `mio::Poll` 阻塞等待 socket readiness，并由 `mio::Waker` 响应新命令和发送任务；空闲 CPU 更低，但可能增加少量唤醒和调度延迟。 |
 
-该配置是进程级设置，同一进程内的全部 `tcp_thread` P2P 连接共用一个等待模式，不能分别为
-FS RPC 和 KV RPC 选择不同模式。该配置只控制当前进程的 TCP reactor；通信对端使用哪种
-等待模式不受影响。
+该配置是进程级设置，同一进程内的全部 `tcp_thread` P2P 连接共用一个等待模式。该配置只
+控制当前进程的 TCP reactor；通信对端使用哪种等待模式不受影响。
 
 连接控制和其他 async 工作仍由 Tokio runtime 执行；握手后的主要 TCP 数据面仍由专用
 `tcpthr_reactor_*` OS 线程处理。

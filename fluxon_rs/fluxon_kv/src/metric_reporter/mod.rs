@@ -1,5 +1,4 @@
 use crate::client_kv_api::{ClientKvApi, ClientKvApiAccessTrait};
-use crate::cluster_manager::META_KEY_LOCAL_IPC_ROOT;
 use crate::cluster_manager::{
     ClusterEvent, ClusterManager, ClusterManagerAccessTrait, ClusterManagerView, ClusterMember,
     NodeID, NodeRole,
@@ -30,14 +29,9 @@ use fluxon_observability::prom_remote_write_orchestrator::{
     PromRemoteWriteHttpSender, PromRemoteWriteProxyReq, PromRemoteWriteProxyResp,
     handle_proxy_request as handle_prom_remote_write_proxy_request,
 };
-use fluxon_observability::types::FsMountKind;
-use fluxon_util::fs_statvfs::{
-    mount_point_for_abs_dir, normalize_abs_dir_label, statvfs_used_total,
-};
 use limit_thirdparty::tokio;
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
@@ -56,66 +50,6 @@ const PROM_REMOTE_WRITE_ACTOR_MAX_PENDING_PAYLOADS: usize = 8;
 // This queue bounds memory in case producers outpace Prom remote-write.
 // Explicit constant to avoid hidden defaults.
 const METRICS_ACTOR_MAX_PENDING_MSGS: usize = 4096;
-const SHM_FILE_METRICS_MAX_FILES: usize = 64;
-
-#[derive(Debug, Clone)]
-struct ShmFileUsageRec {
-    file_path_abs: String,
-    logical_size_bytes: u64,
-    allocated_bytes: u64,
-}
-
-fn collect_shm_file_usage(
-    shm_dir_abs: &str,
-    max_files: usize,
-) -> Result<Vec<ShmFileUsageRec>, std::io::Error> {
-    let root = Path::new(shm_dir_abs);
-    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
-    let mut out: Vec<ShmFileUsageRec> = Vec::new();
-
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-            let file_type = entry.file_type()?;
-            if file_type.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !(file_type.is_file() || file_type.is_symlink()) {
-                continue;
-            }
-            let meta = match std::fs::metadata(&path) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if !meta.is_file() {
-                continue;
-            }
-            let file_path_abs = match path.canonicalize() {
-                Ok(p) => p.to_string_lossy().into_owned(),
-                Err(_) => path.to_string_lossy().into_owned(),
-            };
-            out.push(ShmFileUsageRec {
-                file_path_abs,
-                logical_size_bytes: meta.len(),
-                allocated_bytes: meta.blocks().saturating_mul(512),
-            });
-        }
-    }
-
-    out.sort_by(|a, b| {
-        b.allocated_bytes
-            .cmp(&a.allocated_bytes)
-            .then_with(|| b.logical_size_bytes.cmp(&a.logical_size_bytes))
-            .then_with(|| a.file_path_abs.cmp(&b.file_path_abs))
-    });
-    if out.len() > max_files {
-        out.truncate(max_files);
-    }
-    Ok(out)
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -650,7 +584,6 @@ impl MetricReporter {
         self.start_prom_remote_write_actor();
         self.start_metrics_actor();
         self.start_kv_metrics_actor();
-        self.start_fs_mount_stat_sampler();
 
         if let Err(e) = self.start_config_monitoring_task().await {
             error!("Failed to start config monitoring task: {}", e);
@@ -746,153 +679,6 @@ impl MetricReporter {
                     shutdown_waiter.wait(),
                 )
                 .await;
-        });
-    }
-
-    fn start_fs_mount_stat_sampler(&self) {
-        // English note:
-        // - These mount points are the only filesystem roots the system expects user code to touch:
-        //   - shared memory directory (KV membership)
-        //   - /tmp
-        // - Export roots are sampled by fluxon_fs agents (they own those directories).
-        //
-        // This sampler is intentionally lightweight (statvfs) and runs outside business hot paths.
-        let view = self.view().clone();
-        let member = view.cluster_manager().get_self_info();
-        match member.node_role() {
-            NodeRole::Master | NodeRole::Client => {}
-            NodeRole::External | NodeRole::Unknown => {
-                // English note:
-                // - External processes should not duplicate mountpoint usage sampling; owner/master reports it.
-                // - fluxon_fs agents still report export roots explicitly via `set_fs_mount_fs_bytes`.
-                return;
-            }
-        }
-        let view_task = view.clone();
-        let shutdown_poller = view.register_shutdown_poller();
-        let mut shutdown_waiter = view.register_shutdown_waiter();
-        let metrics = self.metrics.clone();
-
-        let _ = view.spawn("fs_mount_stat_sampler", async move {
-            const SAMPLE_INTERVAL: Duration = Duration::from_secs(METRICS_FLUSH_INTERVAL_SECS);
-            let mut warned_missing_shm = false;
-            let mut interval = tokio::time::interval(SAMPLE_INTERVAL);
-
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = interval.tick() => {}
-                    _ = shutdown_waiter.wait() => {
-                        info!("fs mount stat sampler stopped by shutdown signal");
-                        return;
-                    }
-                }
-
-                if !shutdown_poller.is_running() {
-                    info!("fs mount stat sampler stopped by shutdown signal");
-                    return;
-                }
-
-                // shm (shared memory dir)
-                let member = view_task.cluster_manager().get_self_info();
-                let shm = member
-                    .metadata
-                    .get(META_KEY_LOCAL_IPC_ROOT)
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string());
-                match shm {
-                    Some(shm_dir_abs0) => {
-                        let shm_dir_abs = normalize_abs_dir_label(&shm_dir_abs0);
-                        if shm_dir_abs.is_empty() {
-                            continue;
-                        }
-                        match statvfs_used_total(&shm_dir_abs) {
-                            Ok((used, total)) => match mount_point_for_abs_dir(&shm_dir_abs) {
-                                Ok(mp) => {
-                                    metrics.set_fs_mount_fs_bytes(
-                                        FsMountKind::Shm,
-                                        &shm_dir_abs,
-                                        mp.as_str(),
-                                        used,
-                                        total,
-                                    );
-                                    match collect_shm_file_usage(
-                                        &shm_dir_abs,
-                                        SHM_FILE_METRICS_MAX_FILES,
-                                    ) {
-                                        Ok(files) => {
-                                            for file in files {
-                                                metrics.set_shm_file_bytes(
-                                                    &shm_dir_abs,
-                                                    file.file_path_abs.as_str(),
-                                                    file.logical_size_bytes,
-                                                    file.allocated_bytes,
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(
-                                                "shm file usage scan failed: dir={} err={}",
-                                                shm_dir_abs, e
-                                            );
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "fs mount mountinfo lookup failed: kind=shm dir={} err={}",
-                                        shm_dir_abs, e
-                                    );
-                                }
-                            },
-                            Err(e) => {
-                                warn!(
-                                    "fs mount statvfs failed: kind=shm dir={} err={}",
-                                    shm_dir_abs, e
-                                );
-                            }
-                        }
-                    }
-                    None => {
-                        if !warned_missing_shm {
-                            warned_missing_shm = true;
-                            warn!(
-                                "fs mount stat sampler skipped shm: member metadata missing {}",
-                                META_KEY_LOCAL_IPC_ROOT
-                            );
-                        }
-                    }
-                }
-
-                // /tmp
-                let tmp_dir_abs = "/tmp";
-                match statvfs_used_total(tmp_dir_abs) {
-                    Ok((used, total)) => match mount_point_for_abs_dir(tmp_dir_abs) {
-                        Ok(mp) => {
-                            metrics.set_fs_mount_fs_bytes(
-                                FsMountKind::Tmp,
-                                tmp_dir_abs,
-                                mp.as_str(),
-                                used,
-                                total,
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                "fs mount mountinfo lookup failed: kind=tmp dir={} err={}",
-                                tmp_dir_abs, e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        warn!(
-                            "fs mount statvfs failed: kind=tmp dir={} err={}",
-                            tmp_dir_abs, e
-                        );
-                    }
-                }
-            }
         });
     }
 

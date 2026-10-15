@@ -181,7 +181,6 @@ close()
 - `FluxonKvClientConfig`: config object, usually built from a Python dict
 - `new_store(config: FluxonKvClientConfig) -> Result[KvClient, ApiError]`: create one KV client
 - `KvClient`: single entrypoint for both KV and RPC
-- `KvClient.third_party_logs_dir() -> Result[str, ApiError]`: return the Fluxon-assigned log root for third-party Python components. Components should derive their own subdirectories under this root, for example `mq/`.
 - `MemHolder`: successful result holder from `get_blocking(...)`
 - `PutOptionalArgs`: optional write controls, most commonly `lease_id`
 
@@ -264,7 +263,6 @@ To increase user-process logs:
 FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
 ```
 
-Third-party Python components should place file logs under `store.third_party_logs_dir().unwrap(...)` and then append a component subdirectory such as `mq/`. This keeps log directory usage bounded and lets the Fluxon observability plane discover and collect those file logs through one `Owner Client`-derived root.
 
 ### Minimal Node-to-Node RPC Example
 
@@ -402,7 +400,6 @@ selection or fault-isolation switches should use the separate
 | `event_driven` (external default) | Blocks in `mio::Poll` for socket readiness and uses `mio::Waker` for new commands and send work. This lowers idle CPU usage but may add a small amount of wake-up and scheduling latency. |
 
 This is a process-level setting. All `tcp_thread` P2P connections in one process share the same
-wait mode, so FS RPC and KV RPC cannot select different modes inside that process. The setting
 controls only the local TCP reactor; the communication peer's wait mode is unaffected.
 
 Connection control and other async work continue to run on the Tokio runtime. After the handshake,

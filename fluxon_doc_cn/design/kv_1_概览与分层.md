@@ -47,7 +47,7 @@ pub struct MasterKvRouterInner {
     pub get_holding: MasterOwnerMemMgr,
     // 每个 key 当前最新已提交版本的权威路由表。
     pub kv_routes: DashMap<String, Arc<OneKvNodesRoutes>>,
-    // 从 kv_routes 派生出的前缀索引；不保证 put 时立即可见的强一致性，当前主要用于 MQ 的容量背压限制。
+    // 从 kv_routes 派生出的前缀索引；不保证 put 时立即可见的强一致性，当前用于 KV 写入准入和容量控制。
     pub prefix_index: ARwLock<PrefixRadixTree>,
     // 每个节点的副本缓存控制器，主要服务非 lease 热 key。
     pub node_kv_cache_controller:

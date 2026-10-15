@@ -22,7 +22,7 @@ fn cache() -> &'static SegmentedCache<String, Instant> {
 
 /// Decide whether an action should be allowed under a rate limit.
 ///
-/// - key: unique identity for the rate bucket (e.g. "mpmc:{id}-mpsc:{id}")
+/// - key: unique identity for the rate bucket (for example, a KV operation id)
 /// - period: minimal interval between allowed actions for the same key
 /// - skip_first: if true, the very first call for a key returns false (skip),
 ///               subsequent calls follow the period gate; if false, first call

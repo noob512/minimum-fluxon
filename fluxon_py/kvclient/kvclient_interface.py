@@ -333,7 +333,7 @@ class KvClient(FactoryOnly):
 
     @abstractmethod
     def get_cluster_name(self) -> str:
-        """Return the cluster name used by channel APIs."""
+        """Return the configured cluster name."""
 
     @abstractmethod
     def get_etcd_config(self) -> List[str]:
@@ -344,9 +344,6 @@ class KvClient(FactoryOnly):
         """Return the owner-derived log root for third-party Python components."""
 
     @abstractmethod
-    def ensure_zero_contribution_for_channel(self) -> None:
-        """Validate this KvClient is safe to use for channel storage."""
-
     def __enter__(self) -> "KvClient":
         """Context manager entry."""
         return self

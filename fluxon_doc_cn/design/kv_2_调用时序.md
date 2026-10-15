@@ -197,7 +197,7 @@ sequenceDiagram
 pub struct MasterKvRouterInner {
     // delete 的权威删除对象。
     pub kv_routes: DashMap<String, Arc<OneKvNodesRoutes>>,
-    // 从 kv_routes 派生出的前缀索引；不保证 put 时立即可见的强一致性，当前主要用于 MQ 的容量背压限制。
+    // 从 kv_routes 派生出的前缀索引；不保证 put 时立即可见的强一致性，当前用于 KV 写入准入和容量控制。
     pub prefix_index: ARwLock<PrefixRadixTree>,
     // 节点侧本地副本缓存控制器。
     pub node_kv_cache_controller:

@@ -858,10 +858,6 @@ class FluxonKVCacheStore(KvClient, KvLeaseApi, KvRpcApi):
         except Exception as e:
             return Result.new_error(GeneralError(message=f"third_party_logs_dir failed: {e}"))
 
-    def ensure_zero_contribution_for_channel(self) -> None:
-        self._config.ensure_zero_contribution_for_channel()
-
-    # ---- Cluster metrics snapshot ----
     def metrics_snapshot(self) -> MetricSnapshot:
         """Build a MetricSnapshot from the Rust client's metrics snapshot."""
         raw = getattr(self._client, "metrics_snapshot", None)

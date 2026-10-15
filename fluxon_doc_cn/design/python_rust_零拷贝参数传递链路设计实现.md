@@ -14,7 +14,7 @@ Fluxon KV 的 Python 接口需要支持两类高频 payload：
 - 普通 `bytes`
 - 由 numpy / torch 等第三方框架导出的 DLPack tensor
 
-更直接的工程动机来自 Python 侧的 `bytes` 构造成本。对于大 payload，问题不只在 Python/Rust 边界上的复制，还在 Python 先把参数组织成 `bytes` 这一动作本身。这里的成本既包括内存分配、拷贝和拼接，也包括相关路径长期运行在 GIL 保护下带来的串行化开销。在 MQ 单 consumer 进程压测中，我们把 `bytes` payload 换成 DLPack 后，吞吐从约 `1 GB/s` 直接提升到约 `6 GB/s`。这说明仅仅减少边界复制还不够，Python 中间层对象构造和 GIL 占用本身就是主要瓶颈之一。
+更直接的工程动机来自 Python 侧的 `bytes` 构造成本。对于大 payload，问题不只在 Python/Rust 边界上的复制，还在 Python 先把参数组织成 `bytes` 这一动作本身。这里的成本既包括内存分配、拷贝和拼接，也包括相关路径长期运行在 GIL 保护下带来的串行化开销。在大 payload 的 KV 数据路径压测中，我们把 `bytes` payload 换成 DLPack 后，吞吐从约 `1 GB/s` 直接提升到约 `6 GB/s`。这说明仅仅减少边界复制还不够，Python 中间层对象构造和 GIL 占用本身就是主要瓶颈之一。
 
 这条设计要解决的是 Python 调用 KV `put / get / rpc` 时，payload 在 Python、PyO3 和 Rust 之间如何流动，以及这条链路上哪些环节是真正的零拷贝借用，哪些环节仍然会发生复制。
 

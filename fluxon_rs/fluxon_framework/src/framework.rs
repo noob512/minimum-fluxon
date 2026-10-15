@@ -1017,9 +1017,9 @@ mod tests {
         }));
         fw.init_attach_views();
 
-        let mut fs_participant = fw
-            .register_pre_shutdown("fs dependent")
-            .expect("register FS pre-shutdown participant");
+        let mut storage_participant = fw
+            .register_pre_shutdown("storage dependent")
+            .expect("register storage pre-shutdown participant");
         let parent_poller = fw.register_shutdown_poller();
         fw.request_shutdown();
         assert!(
@@ -1029,7 +1029,7 @@ mod tests {
         let shutdown_fw = fw.clone();
         let shutdown = spawn(async move { shutdown_fw.shutdown().await });
 
-        fs_participant
+        storage_participant
             .wait_requested()
             .await
             .expect("receive KV pre-shutdown request");
@@ -1044,7 +1044,7 @@ mod tests {
             "module prepare_shutdown must wait for every dependent ACK"
         );
 
-        fs_participant.finish();
+        storage_participant.finish();
         shutdown
             .await
             .expect("framework shutdown task")

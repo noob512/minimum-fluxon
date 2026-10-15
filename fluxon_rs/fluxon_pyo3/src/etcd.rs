@@ -108,7 +108,7 @@ impl PyEtcdKvClient {
         let endpoints = normalize_raw_endpoints(endpoints, "EtcdKvClient")?;
         let pool_entry = etcd_clients_pool().acquire(endpoints.clone());
         Ok(Self {
-            rt: crate::mpsc::get_global_runtime(),
+            rt: Arc::new(Runtime::new().expect("create etcd runtime")),
             endpoints,
             pool_entry,
         })
@@ -406,7 +406,7 @@ impl PyEtcdLock {
 
         let pool_entry = etcd_clients_pool().acquire(endpoints.clone());
         Ok(Self {
-            rt: crate::mpsc::get_global_runtime(),
+            rt: Arc::new(Runtime::new().expect("create etcd runtime")),
             pool_entry,
             name,
             ttl_seconds,

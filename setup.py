@@ -24,7 +24,7 @@ def get_long_description():
         with open(readme_file, 'r', encoding='utf-8') as f:
             return f.read()
     return (
-        "Fluxon is a high-performance distributed cache and message queue system for AI workloads. "
+        "Fluxon is a high-performance distributed KV Cache and RPC system for AI workloads. "
         "This package provides the Python client APIs and service/monitoring utilities."
     )
 
@@ -51,7 +51,7 @@ _extras = {
 setup(
     name=PYTHON_DISTRIBUTION_NAME,
     version=get_version(),
-    description='Fluxon - high-performance distributed cache and message queue for AI workloads',
+    description='Fluxon - high-performance distributed KV Cache and RPC for AI workloads',
     long_description=get_long_description(),
     long_description_content_type='text/markdown',
     author='TeleAI Infra Team',

@@ -7,8 +7,8 @@ use crate::p2p::p2p_module::P2pModule;
 use crate::rpcresp_kvresult_convert;
 use crate::rpcresp_kvresult_convert::msg_and_error::{KvError, KvResult, P2pError};
 
-// CountPrefix runs synchronously in MQ capacity checks. Bound both blocking
-// control steps so their combined maximum stays below MQ worker shutdown grace.
+// CountPrefix runs synchronously in KV metadata checks. Bound both blocking
+// control steps so their combined maximum stays within the worker shutdown grace.
 const COUNT_PREFIX_MASTER_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
 const COUNT_PREFIX_RPC_TIMEOUT: Duration = Duration::from_secs(MIN_EXPLICIT_RPC_TIMEOUT_SECS);
 

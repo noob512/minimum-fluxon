@@ -17,7 +17,6 @@ pub mod kvlease;
 pub mod master_kv_router;
 pub mod master_lease_manager;
 pub mod master_seg_manager;
-pub mod master_ui_monitor;
 pub mod memholder;
 pub mod metric_reporter;
 pub mod metrics;
@@ -32,7 +31,6 @@ pub mod user_rpc;
 
 pub use crate::client_seg_pool::SharedJsonMeta;
 pub use crate::cluster_manager::{ClusterEvent, ClusterMember};
-pub use fluxon_observability::types::FsMountKind;
 
 pub type MembershipEventReceiver =
     limit_thirdparty::tokio::sync::abroadcast::Receiver<ClusterEvent>;
@@ -1587,9 +1585,6 @@ async fn run_master_impl(
     );
 
     let framework = Arc::new(framework);
-    if crate::master_ui_monitor::try_start_master_ui_monitor(framework.clone(), &config)? {
-        return Ok((framework, config));
-    }
 
     Ok((framework, config))
 }

@@ -14,7 +14,7 @@ Rust 内部还支持：
 - `preferred_sub_cluster`
 
 但它还没有完整暴露成 Python 稳定公开契约，应视为实现内已有能力，不应在用户示例里假定它始终可用。
-当前它主要是 Fluxon MQ 通过 Rust 接口直接依赖的能力。
+当前它主要用于 KV 写入路径的放置偏好和跨节点传输。
 
 ### `lease_id`
 
@@ -31,7 +31,7 @@ Rust 内部还支持：
 - `get` 热路径只需要读 `route.lease_id`，不需要再向 lease manager 额外探测。
 - lease 过期后，由 lease manager 触发清理，而不是交给普通缓存淘汰间接删除。
 
-Fluxon MQ 也通过 `lease_id` 实现 KV/MQ 的协同能力支持，确保消息需要长期有效时不会被普通缓存驱逐。
+`lease_id` 用于让 KV 条目在指定租约内保持有效，确保长期驻留数据不会被普通缓存驱逐。
 
 这是当前实现里“lease 语义收敛到版本路由对象上”的关键设计。
 
@@ -86,7 +86,7 @@ Fluxon MQ 也通过 `lease_id` 实现 KV/MQ 的协同能力支持，确保消息
 
 - `put` 的 bytes 填充和跨节点传输都发生在 client/transfer engine，不发生在 master 锁内。
 - `delete` 先删路由，再异步广播失效。
-- `put_done` 提交后，前缀索引更新和 moka 插入都在后台 task 完成；因此 `prefix_index` 不保证 put 时立即可见的强一致性，当前主要用于 MQ 的容量背压限制。
+- `put_done` 提交后，前缀索引更新和 moka 插入都在后台 task 完成；因此 `prefix_index` 不保证 put 时立即可见的强一致性，当前用于 KV 写入准入和容量控制。
 
 这就是文档占位里“hold the main state machine when using”的真实含义：当前实现显式避免在主状态机路径上长时间持锁或等待大传输。
 

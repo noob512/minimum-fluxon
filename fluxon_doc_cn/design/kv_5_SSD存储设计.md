@@ -143,7 +143,7 @@ owner 不读取单独的 SSD 路径参数。每个 SSD cache root 都从对应�
 - **容量作用域**
   - `large_limit_size[i]` 只约束 `large_file_paths[i]` 派生的 KV SSD cache root。
   - 它限制 key-value payload 在 KV SSD ring 中的用量，不代表整块 SSD 的物理容量。
-  - 日志、profile、FS disk cache 等其他大文件资产不受该值约束。
+  - 日志、profile 等其他大文件资产不受该值约束。
 - **ring 空间不足**
 
   **ring 是构建在定长 shard 文件之上的循环空间分配器和本地 key-version 索引。** 每个 shard 用 `head` 为新 value 分配对齐后的连续区间；写到文件末尾时，物理 offset 回到文件开头继续复用空间。`tail` 随覆盖边界向前推进，回收最旧且已经可以覆盖的 entry。ring 同时记录 entry 的 `Writing/Committed` 状态、read pin 和 route commit pin，遇到仍在写入、读取或提交 route 的区间时会等待，不会直接覆盖。

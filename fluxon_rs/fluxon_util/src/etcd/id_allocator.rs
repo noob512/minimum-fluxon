@@ -9,7 +9,7 @@ use tracing::debug;
 /// Global counter key: `dist_id_allocator/{prefix}`.
 ///
 /// The counter key may either:
-/// - reuse a caller-provided lease for channel-scoped allocators, or
+/// - reuse a caller-provided lease for scoped allocators, or
 /// - stay intentionally unleased for process-global monotonic counters.
 pub struct DistributeIdAllocator {
     client: Client,
@@ -32,7 +32,7 @@ impl DistributeIdAllocator {
     /// any etcd lease.
     ///
     /// This mode is required for process-global monotonic counters such as the
-    /// top-level MPSC `chan_id` allocator. Binding that counter to a short-lived
+    /// top-level scoped allocator. Binding that counter to a short-lived
     /// lease would let the key disappear during an idle window and later restart
     /// from `1`, which can collide with still-existing historical metadata.
     pub fn new_without_lease(client: Client, prefix: impl Into<String>) -> Self {

@@ -252,7 +252,7 @@ def register_ctrlc_callback(
                 return
             callback_requested = True
             # A Python signal frame can interrupt PyO3 while the main thread owns
-            # MQ operation locks. Run potentially blocking cleanup on the listener.
+            # Operation locks. Run potentially blocking cleanup on the listener.
             callback_requests.put(_signal_reason(signum))
 
         signal.signal(signal.SIGINT, _handler)

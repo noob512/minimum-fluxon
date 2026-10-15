@@ -845,56 +845,10 @@ class FluxonKvClientConfig():
     def to_dict(self) -> Dict[str, Any]:
         return copy.deepcopy(self.config_dict)
 
-    # Channel-related validations
-
-    def ensure_zero_contribution_for_channel(self) -> None:
-        """
-        Ensure the underlying KV store contributes 0 capacity when used for channels.
-
-        Semantics: MQ (MPSC/MPMC) supports dynamic producer/consumer join/leave. If the
-        underlying store contributes non-zero capacity to the cluster pool, capacity
-        fluctuates and can destabilize the system.
-
-        Contract:
-        - "Zero-contribution" mode is selected when contribute_to_cluster_pool_size is missing,
-          or when dram is 0 and all VRAM entries are 0.
-        - Channel usage requires zero-contribution mode.
-        """
-        cfg = self.config_dict.get("contribute_to_cluster_pool_size")
-        if cfg is None:
-            return
-
-        if not isinstance(cfg, dict):
-            raise ValueError(
-                "contribute_to_cluster_pool_size must be a mapping when provided; "
-                f"got {type(cfg).__name__}"
-            )
-
-        dram = _parse_size_bytes(cfg["dram"], "contribute_to_cluster_pool_size.dram")
-        vram_raw = cfg.get("vram")
-        if vram_raw is None:
-            vram = {}
-        elif not isinstance(vram_raw, dict):
-            raise ValueError("contribute_to_cluster_pool_size.vram must be a mapping")
-        else:
-            vram = vram_raw
-
-        if dram != 0:
-            raise ValueError(
-                f"For channel storage, contribute_to_cluster_pool_size must be zero-contribution. Current value: {cfg}. "
-                "Message-queue semantics require dynamic join/leave; non-zero contribution causes instability."
-            )
-        for gpu_id, size in vram.items():
-            if _parse_size_bytes(size, f"contribute_to_cluster_pool_size.vram.{gpu_id}") != 0:
-                raise ValueError(
-                    f"For channel storage, contribute_to_cluster_pool_size must be zero-contribution. Current value: {cfg}. "
-                    f"Non-zero vram entry detected: gpu_id={gpu_id}. "
-                    "Message-queue semantics require dynamic join/leave; non-zero contribution causes instability."
-                )
-
 
 def _dict_template():
     return yaml.safe_load(_yaml_template())
+
 
 def _parse_type_annotation(comment: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """

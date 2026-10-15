@@ -319,7 +319,7 @@ class TransferBlockFailedError(ApiError):
     (TransferFailedForBlock) reported by the underlying transfer engine.
 
     This error is retryable and should be handled by the upper layer
-    (e.g. MQ put callback) via type checks (avoid string matching).
+    (e.g. KV transfer callback) via type checks (avoid string matching).
     """
 
     endpoint: Optional[str] = None
@@ -355,9 +355,7 @@ class FileRelatedError(ApiError):
 # Codes are assigned to avoid collisions with the base set above.
 #
 # File cache related (10100-10199)
-# Channel (MPSC/MPMC) related (12000-12999)
 # Extension/system bridge (13000-13999)
-# Channel-manager domain keeps its original 20000+ range.
 #
 # Note: Avoid names that shadow Python builtins (e.g. FileNotFoundError).
 # ==========================
@@ -441,55 +439,9 @@ class CacheInvalidationError(ApiError):
         return 10105
 
 
-# MPSC/MPMC Channel related errors (12000-12999)
-
-
-@dataclass(frozen=True)
-class ChannelNotFoundError(ApiError):
-    """Channel not found errors."""
-
-    channel_id: Optional[str] = None
-
-    def code(self) -> int:
-        return 12000
-
-
-@dataclass(frozen=True)
-class ChannelClosedError(ApiError):
-    """Channel closed errors."""
-
-    channel_id: Optional[str] = None
-
-    def code(self) -> int:
-        return 12001
-
-
-@dataclass(frozen=True)
-class ProducerRegistrationError(ApiError):
-    """Producer registration failed errors."""
-
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    max_retries: Optional[int] = None
-
-    def code(self) -> int:
-        return 12002
-
-
-@dataclass(frozen=True)
-class ProducerClosedError(ApiError):
-    """Producer closed errors."""
-
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-
-    def code(self) -> int:
-        return 12003
-
-
 @dataclass(frozen=True)
 class PayloadLeaseNotFoundError(ApiError):
-    """Payload lease not found or expired errors (MQ/MPSC data path).
+    """Payload lease not found or expired errors in the KV data path.
 
     When the underlying KV backend reports LeaseMgrError::LeaseNotFound or
     LeaseExpired during put, fluxon_pyo3 narrows it into this error type:
@@ -498,7 +450,7 @@ class PayloadLeaseNotFoundError(ApiError):
     - message: keep the full Rust-formatted text for debugging;
       for expired leases the message contains "(expired)".
 
-    The upper layer (e.g. MPSCChanProducer.put_data) should detect this via
+    KV write callers should detect this via
     ``isinstance(err, PayloadLeaseNotFoundError)`` rather than fragile string
     checks, keeping the "payload lease lost" contract stable and type-matchable.
     """
@@ -510,147 +462,18 @@ class PayloadLeaseNotFoundError(ApiError):
 
 
 @dataclass(frozen=True)
-class ConsumerInitError(ApiError):
-    """Consumer initialization failed errors."""
-
-    channel_id: Optional[str] = None
-    instance_name: Optional[str] = None
-
-    def code(self) -> int:
-        return 12004
-
-
-@dataclass(frozen=True)
-class MessageBufferFullError(ApiError):
-    """Message buffer full errors."""
-
-    channel_id: Optional[str] = None
-    buffer_size: Optional[int] = None
-
-    def code(self) -> int:
-        return 12005
-
-
-@dataclass(frozen=True)
-class VersionConflictError(ApiError):
-    """Version conflict errors."""
-
-    channel_id: Optional[str] = None
-    expected_version: Optional[int] = None
-    actual_version: Optional[int] = None
-
-    def code(self) -> int:
-        return 12007
-
-
-@dataclass(frozen=True)
-class ProducerDiscoveryError(ApiError):
-    """Producer discovery failed errors."""
-
-    channel_id: Optional[str] = None
-
-    def code(self) -> int:
-        return 12008
-
-
-@dataclass(frozen=True)
-class MessageProductionError(ApiError):
-    """Message production failed errors."""
-
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 12009
-
-
-@dataclass(frozen=True)
 class PutDoneFailedError(ApiError):
-    """PutDone/commit phase failure (e.g. Master-side state mismatch).
+    """KV commit phase failure (e.g. master-side state mismatch).
 
     Narrows generic network errors returned by the backend (including coordination
     details such as InvalidPutMasterState) into an explicit semantic error type,
     avoiding scattered string matching in upper-layer logic.
     """
 
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
     detail: Optional[str] = None
 
     def code(self) -> int:
         return 12012
-
-
-@dataclass(frozen=True)
-class MqGetDataUnknownError(ApiError):
-    """Unexpected exception wrapper for MQ get_data path.
-
-    get_data semantics require all errors to be represented as ApiError rather than
-    raising raw exceptions. In extreme cases, the Rust/PyO3 callback path may still
-    raise a non-ApiError exception (e.g. RuntimeError). When that happens, the
-    MPSCChanConsumer wraps the original exception into this type:
-    - message: fixed description + exception summary (type name + text)
-    - channel_id / consumer_id: identify the failing channel/consumer
-    - inner_exc_type / inner_exc_message: record original exception type/message to
-      avoid reconstructing strings in the upper layer
-
-    This error is only used as a last-resort wrapper inside get_data to keep the
-    error taxonomy closed and prevent further type proliferation.
-    """
-
-    channel_id: Optional[str] = None
-    consumer_id: Optional[str] = None
-    inner_exc_type: Optional[str] = None
-    inner_exc_message: Optional[str] = None
-    inner_exc_traceback: Optional[str] = None
-
-    @classmethod
-    def from_exception(
-        cls,
-        exc: Exception,
-        *,
-        channel_id: Optional[str],
-        consumer_id: Optional[str],
-    ) -> "MqGetDataUnknownError":
-        tb = "".join(_traceback.format_exception(type(exc), exc, exc.__traceback__))
-        return cls(
-            message=f"unexpected exception from mq get_data: {type(exc).__name__}: {exc}",
-            details=None,
-            channel_id=channel_id,
-            consumer_id=consumer_id,
-            inner_exc_type=type(exc).__name__,
-            inner_exc_message=str(exc),
-            inner_exc_traceback=tb,
-        )
-
-    def code(self) -> int:
-        return 12013
-
-
-@dataclass(frozen=True)
-class MessageConsumptionError(ApiError):
-    """Message consumption failed errors."""
-
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 12010
-
-
-@dataclass(frozen=True)
-class MessageConsumptionNoNewMessageError(ApiError):
-    """Message consumption no new message (non-fatal)."""
-
-    channel_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 12011
 
 
 # removed: error_for_result — all traceback sanitation is centralized in Result.new_error
@@ -709,121 +532,6 @@ class InternalError(ApiError):
 
     def code(self) -> int:
         return 13005
-
-
-# Channel Manager Errors (keep 20000+)
-
-
-@dataclass(frozen=True)
-class ChanKeyNotFoundError(ApiError):
-    """Chan key cannot be found in client."""
-
-    chan_key: Optional[str] = None
-
-    def code(self) -> int:
-        return 20000
-
-
-@dataclass(frozen=True)
-class ChanConfigEmptyError(ApiError):
-    """Chan config is empty."""
-
-    chan_config: Optional[Any] = None
-
-    def code(self) -> int:
-        return 20001
-
-
-@dataclass(frozen=True)
-class ChanCreateError(ApiError):
-    """Create failed."""
-
-    def code(self) -> int:
-        return 20002
-
-
-@dataclass(frozen=True)
-class ChanDeleteError(ApiError):
-    """Delete failed."""
-
-    def code(self) -> int:
-        return 20003
-
-
-@dataclass(frozen=True)
-class ChanBindError(ApiError):
-    """Bind failed."""
-
-    def code(self) -> int:
-        return 20004
-
-
-@dataclass(frozen=True)
-class ChanUnBindError(ApiError):
-    """UnBind failed."""
-
-    def code(self) -> int:
-        return 20005
-
-
-@dataclass(frozen=True)
-class ChanMessageConsumptionError(ApiError):
-    """Message consumption failed errors."""
-
-    chan_id: Optional[str] = None
-    consumer_idx: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 20006
-
-
-@dataclass(frozen=True)
-class ChanMessageProduceError(ApiError):
-    """Message produce failed errors."""
-
-    chan_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 20007
-
-
-@dataclass(frozen=True)
-class ChanIdxDuplicateError(ApiError):
-    """Index duplicate errors."""
-
-    chan_id: Optional[str] = None
-    producer_idx: Optional[str] = None
-    message_id: Optional[int] = None
-
-    def code(self) -> int:
-        return 20008
-
-
-@dataclass(frozen=True)
-class ConsumerRegistrationError(ApiError):
-    """Consumer registration errors."""
-
-    message_id: Optional[str] = None
-    channel_id: Optional[str] = None
-    consumer_idx: Optional[str] = None
-
-    def code(self) -> int:
-        return 20009
-
-
-@dataclass(frozen=True)
-class ConsumerUnBindError(ApiError):
-    """Consumer unbind failed errors."""
-
-    chan_id: Optional[str] = None
-    consumer_idx: Optional[str] = None
-
-    def code(self) -> int:
-        return 20010
 
 
 # Message serialization errors (14000-14999)
@@ -897,7 +605,7 @@ class Result(Generic[T, E]):
         """Create an error result."""
         assert error is not None, "Error must not be None"
         # Sanitize ApiError to avoid traceback holding strong refs to frames/locals
-        # which might indirectly reference large objects (e.g., MQ handles).
+        # which might indirectly reference large client objects.
         try:
             if isinstance(error, ApiError):
                 from dataclasses import fields as _dataclass_fields
@@ -1008,21 +716,19 @@ def exception_to_error(exc: Exception) -> ApiError:
 def exception_to_ext_error(exc: Exception, context: Optional[Dict[str, Any]] = None) -> ApiError:
     """Convert a standard exception to an extension-layer ApiError."""
     ctx: Dict[str, Any] = context or {}
-    channel_id = ctx.get("channel_id")
-    channel_id_str = None if channel_id is None else str(channel_id)
 
     if isinstance(exc, builtins.FileNotFoundError):
         return ApiFileNotFoundError(message=str(exc), filepath=ctx.get("filepath"))
-    elif isinstance(exc, PermissionError):
+    if isinstance(exc, PermissionError):
         return FileAccessDeniedError(message=str(exc), filepath=ctx.get("filepath"))
-    elif isinstance(exc, OSError):
+    if isinstance(exc, OSError):
         return FileReadError(
             message=str(exc),
             filepath=ctx.get("filepath"),
             offset=ctx.get("offset"),
             length=ctx.get("length"),
         )
-    elif isinstance(exc, ValueError):
+    if isinstance(exc, ValueError):
         if "range" in str(exc).lower():
             return InvalidRangeError(
                 message=str(exc),
@@ -1031,40 +737,25 @@ def exception_to_ext_error(exc: Exception, context: Optional[Dict[str, Any]] = N
                 length=ctx.get("length"),
                 file_size=ctx.get("file_size"),
             )
-        else:
-            return InvalidConfigurationError(
-                message=str(exc),
-                config_key=ctx.get("config_key"),
-                config_value=ctx.get("config_value"),
-            )
-    elif isinstance(exc, RuntimeError):
-        if "producer" in str(exc).lower():
-            return ProducerRegistrationError(
-                message=str(exc),
-                channel_id=channel_id_str,
-                max_retries=ctx.get("max_retries"),
-            )
-        elif "consumer" in str(exc).lower():
-            return ConsumerInitError(
-                message=str(exc),
-                channel_id=channel_id_str,
-                instance_name=ctx.get("instance_name"),
-            )
-        else:
-            comp = (ctx.get("component") or "").lower()
-            if "etcd" in comp:
-                return EtcdError(message=str(exc), component=ctx.get("component"))
-            elif "join" in comp:
-                return JoinError(message=str(exc), component=ctx.get("component"))
-            else:
-                return InternalError(message=str(exc), component=ctx.get("component"))
-    elif isinstance(exc, json.JSONDecodeError):
+        return InvalidConfigurationError(
+            message=str(exc),
+            config_key=ctx.get("config_key"),
+            config_value=ctx.get("config_value"),
+        )
+    if isinstance(exc, RuntimeError):
+        component = ctx.get("component")
+        component_name = (component or "").lower()
+        if "etcd" in component_name:
+            return EtcdError(message=str(exc), component=component)
+        if "join" in component_name:
+            return JoinError(message=str(exc), component=component)
+        return InternalError(message=str(exc), component=component)
+    if isinstance(exc, json.JSONDecodeError):
         return MsgDeserializeError(
             message=f"JSON decode error: {str(exc)}",
-            details={"channel_id": ctx.get("channel_id"), "message_key": ctx.get("message_key")},
+            details={"message_key": ctx.get("message_key")},
         )
-    else:
-        return exception_to_error(exc)
+    return exception_to_error(exc)
 
 
 def validate_file_range(
@@ -1109,42 +800,6 @@ def validate_file_range(
 
     return None
 
-
-def validate_channel_config(channel_id: str, buffer_size: int) -> Optional[ApiError]:
-    """Validate channel configuration and return error if invalid."""
-    if not channel_id or not isinstance(channel_id, str):
-        return InvalidConfigurationError(
-            message="Channel ID must be a non-empty string",
-            config_key="channel_id",
-            config_value=channel_id,
-        )
-
-    if buffer_size <= 0:
-        return InvalidConfigurationError(
-            message=f"Buffer size must be positive: {buffer_size}",
-            config_key="buffer_size",
-            config_value=buffer_size,
-        )
-
-    # Reasonable buffer limits (1MB to 1GB)
-    min_buffer_size = 1024 * 1024
-    max_buffer_size = 1024 * 1024 * 1024
-
-    if buffer_size < min_buffer_size:
-        return InvalidConfigurationError(
-            message=f"Buffer size too small (minimum {min_buffer_size}): {buffer_size}",
-            config_key="buffer_size",
-            config_value=buffer_size,
-        )
-
-    if buffer_size > max_buffer_size:
-        return InvalidConfigurationError(
-            message=f"Buffer size too large (maximum {max_buffer_size}): {buffer_size}",
-            config_key="buffer_size",
-            config_value=buffer_size,
-        )
-
-    return None
 
 def mooncake_format(message: str, specific_info: str, retcode: int) -> str:
     return f"{message}:({specific_info}) (mooncake_code={retcode})"

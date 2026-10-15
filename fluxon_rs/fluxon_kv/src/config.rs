@@ -887,10 +887,10 @@ impl LargeFilePaths {
         self.resolve_preferred_root_subdir(&relative_dir, "side-transfer runtime")
     }
 
-    pub fn fs_disk_cache_base_dir(&self) -> KvResult<PathBuf> {
+    pub fn kv_disk_cache_base_dir(&self) -> KvResult<PathBuf> {
         self.resolve_preferred_root_subdir(
-            Path::new("fluxon_fs_disk_cache"),
-            "fluxon fs disk cache",
+            Path::new("fluxon_kv_disk_cache"),
+            "fluxon KV disk cache",
         )
     }
 
@@ -1158,7 +1158,7 @@ pub fn denormalize_etcd_endpoints(endpoints: &[String]) -> KvResult<Vec<String>>
     //
     // Causal chain:
     // - Python KvClient exposes `get_etcd_config()` as raw host:port (no scheme).
-    // - Rust business modules (fs/ops/mq) also need raw host:port for a consistent public API.
+    // - Rust KV/RPC modules also use raw host:port for a consistent public API.
     // - Internally, `etcd-client` requires scheme-prefixed endpoints; we keep the conversion
     //   deterministic and reject any non-canonical forms (no fallback).
     let mut result = Vec::new();
