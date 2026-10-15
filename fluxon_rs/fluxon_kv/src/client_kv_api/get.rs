@@ -1,0 +1,767 @@
+use super::{ClientKvApiInner, SSD_SOURCE_TERMINAL_ATTEMPT_TIMEOUT, SSD_STAGE_RPC_TIMEOUT};
+use crate::client_kv_api::CachedValue;
+use crate::cluster_manager::app_logic_ext::ClusterManagerAppLogicExt;
+use crate::memholder::{MemoryInfo, UserMemHolder, UserMemHolderExposeKind};
+// no StageScope; timestamps-based metrics only
+use crate::observe_kvope::{
+    obe_get_cache_hit, obe_get_cache_miss, obe_get_done_error_status, obe_get_done_success,
+    obe_get_end_error_rpc, obe_get_start_error_rpc, obe_get_start_error_status,
+    obe_get_start_not_found, obe_get_start_success, obe_get_transfer_error,
+    obe_get_transfer_success,
+};
+use crate::{
+    cluster_manager::NodeID,
+    master_kv_router::msg_pack::{
+        GetAllocationMode, GetDoneReq, GetDoneResp, GetMetaReq, GetMetaResp, GetRevokeReq,
+        GetSourceKind, GetStartReq, GetStartResp,
+    },
+    p2p::msg_pack::MsgPack,
+    rpcresp_kvresult_convert::msg_and_error::codes_api,
+    rpcresp_kvresult_convert::msg_and_error::{ApiError, KvError, KvResult, OK},
+};
+use chrono::Utc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+const MAX_STALE_SSD_ROUTE_RETRIES: usize = 3;
+const GET_TERMINAL_RPC_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone)]
+pub struct RemoteGetInfo {
+    get_id: u64,
+    data_len: usize,
+    source_kind: GetSourceKind,
+    src_addr: u64,
+    target_addr: u64,
+    node_id: NodeID,
+    peer_is_src_or_target: bool,
+}
+
+impl RemoteGetInfo {
+    pub fn source_kind(&self) -> GetSourceKind {
+        self.source_kind
+    }
+}
+
+impl std::fmt::Display for RemoteGetInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "GetInfo{{ get_id: {}, data_len: {} bytes, source_kind: {:?}, src_addr: {:#x}, target_addr: {:#x}, node_id: {:?}, remote_transfer: {} }}",
+            self.get_id,
+            self.data_len,
+            self.source_kind,
+            self.src_addr,
+            self.target_addr,
+            self.node_id,
+            self.peer_is_src_or_target
+        )
+    }
+}
+
+impl ClientKvApiInner {
+    /// becaused we cached local kv metadata, so we make `MemHolder` with Arc here
+    pub async fn get(
+        &self,
+        key: &str,
+    ) -> KvResult<Option<(Arc<UserMemHolder>, Option<RemoteGetInfo>)>> {
+        let _shutdown_guard = self.shutdown_guard("get")?;
+        let metrics = self.metrics_handle();
+        let client_id = self.client_id_str();
+        let node_role = self.node_role();
+
+        if let Some(cached_info) = self.get_cached_info.get(key) {
+            if let CachedValue::LocalReplica(memory_info) = &cached_info.value {
+                tracing::debug!(
+                    "cache hit for key: {} with putid({},{}), directly return",
+                    key,
+                    cached_info.put_time_ms,
+                    cached_info.put_version
+                );
+                let user_mem_holder = Arc::new(UserMemHolder::new(
+                    memory_info.clone(),
+                    self.get_or_init_all_memholder_refcount(),
+                    UserMemHolderExposeKind::SegPtr,
+                ));
+                obe_get_cache_hit(
+                    &metrics,
+                    &client_id,
+                    &node_role,
+                    key,
+                    memory_info.len as u64,
+                );
+                return Ok(Some((user_mem_holder, None)));
+            }
+        }
+
+        let lock = self.get_remote_kv_lock.get_lock(key.to_owned());
+        let _guard = lock.lock().await;
+
+        // Recheck after acquiring the miss lock so concurrent cache-fillers can collapse here
+        // without forcing every cache hit through the async lock path.
+        if let Some(cached_info) = self.get_cached_info.get(key) {
+            if let CachedValue::LocalReplica(memory_info) = &cached_info.value {
+                tracing::debug!(
+                    "cache hit after miss-lock for key: {} with putid({},{}), directly return",
+                    key,
+                    cached_info.put_time_ms,
+                    cached_info.put_version
+                );
+                let user_mem_holder = Arc::new(UserMemHolder::new(
+                    memory_info.clone(),
+                    self.get_or_init_all_memholder_refcount(),
+                    UserMemHolderExposeKind::SegPtr,
+                ));
+                obe_get_cache_hit(
+                    &metrics,
+                    &client_id,
+                    &node_role,
+                    key,
+                    memory_info.len as u64,
+                );
+                return Ok(Some((user_mem_holder, None)));
+            }
+        }
+
+        obe_get_cache_miss(&metrics, &client_id, &node_role, key);
+        let mut stale_ssd_route_retries = 0usize;
+        'remote_get: loop {
+            let t1 = Utc::now().timestamp_micros();
+            let resp = {
+                match self.get_start(key).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        obe_get_start_error_rpc(&metrics, &client_id, &node_role, key);
+                        return Err(err);
+                    }
+                }
+            };
+            let start_handle_us = resp.server_process_us;
+            let t2 = Utc::now().timestamp_micros();
+            // start stage success
+            // Note: only record timestamps; no scope begin/end
+            //       errors handled above and below
+            if resp.error_code != OK {
+                if resp.error_code == codes_api::API_KEY_NOT_FOUND {
+                    obe_get_start_not_found(&metrics, &client_id, &node_role, key);
+                    return Ok(None);
+                }
+                obe_get_start_error_status(&metrics, &client_id, &node_role, key);
+                crate::rpcresp_kvresult_convert::try_from_code(
+                    resp.error_code,
+                    resp.error_json.clone(),
+                )?;
+                unreachable!("try_from_code should have returned Err for non-OK, unreachable");
+            }
+            obe_get_start_success(&metrics, &client_id, &node_role, key, t1, t2);
+
+            let put_id = resp.put_id;
+            let get_id = resp.get_id;
+            let data_len = resp.len as usize;
+
+            let abs_src = resp.src_addr;
+            let abs_target = resp.target_addr;
+
+            // debug get slice from src_addr and len
+            tracing::debug!(
+                "kv get src addr {:#x} to target addr {:#x}",
+                abs_src,
+                abs_target
+            );
+
+            let peer_id = if &*resp.node_id == &*self.view.cluster_manager().get_self_info().id {
+                None
+            } else {
+                Some(resp.node_id.clone())
+            };
+
+            #[cfg(test)]
+            {
+                self.test_record.add_transfering_get(
+                    get_id,
+                    key.to_string(),
+                    data_len as u32,
+                    abs_target,
+                    resp.node_id.to_string(),
+                    peer_id.is_some(),
+                );
+            }
+
+            let mut ssd_done_resp = None;
+            if resp.source_kind == GetSourceKind::Ssd {
+                let ssd_stage_len = resp.ssd_stage_len;
+                if ssd_stage_len < data_len as u64 {
+                    #[cfg(test)]
+                    {
+                        self.test_record.remove_transfering_get(get_id);
+                    }
+
+                    let err = KvError::Api(ApiError::InvalidArgument {
+                        detail: format!(
+                            "invalid ssd stage len for key={} get_id={} data_len={} ssd_stage_len={}",
+                            key, get_id, data_len, ssd_stage_len
+                        ),
+                    });
+                    self.get_revoke_ssd_source(get_id).await?;
+                    if stale_ssd_route_retries < MAX_STALE_SSD_ROUTE_RETRIES {
+                        stale_ssd_route_retries += 1;
+                        tracing::warn!(
+                            "Retrying get after invalid SSD route metadata: key={} retry={}/{}",
+                            key,
+                            stale_ssd_route_retries,
+                            MAX_STALE_SSD_ROUTE_RETRIES
+                        );
+                        continue 'remote_get;
+                    }
+                    return Err(err);
+                }
+                match self
+                    .stage_kv_from_ssd_source(
+                        &resp.node_id,
+                        key,
+                        put_id,
+                        get_id,
+                        abs_src,
+                        abs_target,
+                        data_len as u64,
+                        ssd_stage_len,
+                    )
+                    .await
+                {
+                    Ok(done_resp) => ssd_done_resp = Some(done_resp),
+                    Err(err) => {
+                        tracing::warn!(
+                            "kv get ssd stage failed: key={}, source_node={}, stage={:#x}, target={:#x}, len={}, ssd_stage_len={}, err={}",
+                            key,
+                            resp.node_id,
+                            abs_src,
+                            abs_target,
+                            data_len,
+                            ssd_stage_len,
+                            err
+                        );
+
+                        #[cfg(test)]
+                        {
+                            self.test_record.remove_transfering_get(get_id);
+                        }
+
+                        obe_get_transfer_error(
+                            &metrics,
+                            &client_id,
+                            &node_role,
+                            key,
+                            data_len as u64,
+                        );
+                        self.get_revoke_ssd_source(get_id).await?;
+                        if stale_ssd_route_retries < MAX_STALE_SSD_ROUTE_RETRIES {
+                            stale_ssd_route_retries += 1;
+                            tracing::warn!(
+                                "Retrying get after failed SSD source cleanup: key={} retry={}/{}",
+                                key,
+                                stale_ssd_route_retries,
+                                MAX_STALE_SSD_ROUTE_RETRIES
+                            );
+                            continue 'remote_get;
+                        }
+                        return Err(err);
+                    }
+                }
+                tracing::debug!(
+                    "kv get ssd staged and pushed: key={}, source_node={}, stage={:#x}, target={:#x}, len={}, ssd_stage_len={}",
+                    key,
+                    resp.node_id,
+                    abs_src,
+                    abs_target,
+                    data_len,
+                    ssd_stage_len
+                );
+            }
+
+            // transfer data (skip if local and src==target to avoid redundant copy)
+            if resp.source_kind == GetSourceKind::Ssd {
+                tracing::debug!(
+                    "kv get ssd owner push complete: key={}, target={:#x}, len={} (skip requester transfer)",
+                    key,
+                    abs_target,
+                    data_len
+                );
+            } else if peer_id.is_none() && abs_src == abs_target {
+                tracing::debug!(
+                    "kv get local no-op: src==target {:#x}, len={} (skip transfer)",
+                    abs_target,
+                    data_len
+                );
+            } else {
+                // tracing::debug!(
+                //     "kv get transfer in transfer engine path from {}",
+                //     peer_id.as_ref().map(|v| &**v).unwrap_or("self")
+                // );
+                tracing::debug!(
+                    "p2p get transfer: key={}, remote_src={:#x} -> local_target={:#x}, len={}, peer={:?}",
+                    key,
+                    abs_src,
+                    abs_target,
+                    data_len,
+                    peer_id
+                );
+                if let Err(e) = self
+                    .view
+                    .client_transfer_engine()
+                    .transfer_data_no_copy(
+                        peer_id.clone(),
+                        true,
+                        abs_src,
+                        abs_target,
+                        data_len as u64,
+                        None,
+                    )
+                    .await
+                {
+                    tracing::warn!("transfer data failed: {:?}", e);
+
+                    #[cfg(test)]
+                    {
+                        self.test_record.remove_transfering_get(get_id);
+                    }
+
+                    obe_get_transfer_error(&metrics, &client_id, &node_role, key, data_len as u64);
+                    self.get_revoke(get_id).await?;
+                    return Err(KvError::Api(ApiError::Transfer {
+                        from_addr: abs_src,
+                        to_addr: abs_target,
+                        len: data_len as u64,
+                        error: e.to_string(),
+                    }));
+                } else {
+                    tracing::debug!(
+                        "get_transfer success key={}, src_addr={:#x}, target_addr={:#x}, len={}, peer_id={:?}",
+                        key,
+                        abs_src,
+                        abs_target,
+                        data_len,
+                        peer_id
+                    );
+                }
+            }
+            let t3 = Utc::now().timestamp_micros();
+            obe_get_transfer_success(
+                &metrics,
+                &client_id,
+                &node_role,
+                key,
+                data_len as u64,
+                t2,
+                t3,
+            );
+
+            // Removed post-transfer zero-header verification per request.
+
+            // Remote SSD source owns transfer finalization. Other paths still commit
+            // from the requester after their transfer has stopped touching the target.
+            let done_resp = if let Some(done_resp) = ssd_done_resp {
+                done_resp
+            } else {
+                match self.get_done(get_id).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        obe_get_end_error_rpc(
+                            &metrics,
+                            &client_id,
+                            &node_role,
+                            key,
+                            data_len as u64,
+                        );
+                        if let Err(revoke_err) = self.get_revoke(get_id).await {
+                            tracing::warn!(
+                                get_id,
+                                error = %revoke_err,
+                                "Failed to revoke get after GetDone RPC failure"
+                            );
+                        }
+                        return Err(err);
+                    }
+                }
+            };
+            let end_handle_us = done_resp.server_process_us;
+            let t4 = Utc::now().timestamp_micros();
+            if done_resp.error_code != OK {
+                obe_get_done_error_status(&metrics, &client_id, &node_role, key, data_len as u64);
+                #[cfg(test)]
+                {
+                    self.test_record.remove_transfering_get(get_id);
+                }
+
+                let err = crate::rpcresp_kvresult_convert::try_from_code(
+                    done_resp.error_code,
+                    done_resp.error_json.clone(),
+                )
+                .expect_err("non-OK GetDone response must convert to an error");
+                if let Err(revoke_err) = self.get_revoke(get_id).await {
+                    tracing::warn!(
+                        get_id,
+                        error = %revoke_err,
+                        "Failed to revoke get after GetDone status failure"
+                    );
+                }
+                return Err(err);
+            }
+            // end/done stage success and push detailed metrics
+            obe_get_done_success(
+                &metrics,
+                &client_id,
+                &node_role,
+                key,
+                data_len as u64,
+                get_id,
+                t1,
+                t2,
+                t3,
+                t4,
+                start_handle_us,
+                end_handle_us,
+            );
+
+            #[cfg(test)]
+            {
+                self.test_record.remove_transfering_get(get_id);
+            }
+
+            // pulses and network bytes emitted inside obe_get_done_success
+
+            let holder_id = done_resp.holder_id;
+            let expose_kind = if done_resp.allocation_mode == GetAllocationMode::Temporary {
+                UserMemHolderExposeKind::OwnedCopy
+            } else {
+                UserMemHolderExposeKind::SegPtr
+            };
+            let master_node_id: NodeID = self
+                .view
+                .cluster_manager()
+                .find_or_wait_master_node()
+                .await?
+                .into();
+
+            // Create MemHolder with keep alive functionality
+            // Convert target_addr to offset using base address from master response
+            let offset = resp.target_addr - resp.target_base_addr;
+            let memory_info = Arc::new(
+                MemoryInfo::new(
+                    offset,
+                    data_len as u32,
+                    holder_id,
+                    key.to_string(),
+                    master_node_id,
+                    self.view.clone(),
+                )
+                .await,
+            );
+            // Create GetInfo with information from the response
+            let get_info = RemoteGetInfo {
+                get_id,
+                data_len,
+                source_kind: resp.source_kind,
+                src_addr: abs_src,
+                target_addr: abs_target,
+                node_id: resp.node_id.into(),
+                peer_is_src_or_target: true,
+            };
+
+            if done_resp.allocation_mode != GetAllocationMode::Temporary {
+                self.cache_local_replica_after_get(key, put_id, memory_info.clone());
+                metrics.observe_cache_value_size(&client_id, node_role.as_str(), data_len as u64);
+            }
+            let user_mem_holder = Arc::new(UserMemHolder::new(
+                memory_info,
+                self.get_or_init_all_memholder_refcount(),
+                expose_kind,
+            ));
+            // let partial_hex=&user_mem_holder.bytes()[..std::cmp::min(16, user_mem_holder.bytes().len())];
+            // tracing::debug!("external get done, key={}, partial_hex={:?}", key, partial_hex);
+            return Ok(Some((user_mem_holder, Some(get_info))));
+        }
+    }
+
+    pub async fn is_exist(&self, key: &str) -> KvResult<bool> {
+        if !self.view.register_shutdown_poller().is_running() {
+            return Err(KvError::Api(ApiError::SystemShutdown {
+                detail: "ClientKvApi is shutting down; rejecting is_exist".to_string(),
+            }));
+        }
+        let resp = self.get_meta(key).await?;
+        if resp.error_code != OK {
+            // If error code indicates key not found, return false
+            if resp.error_code
+                == crate::rpcresp_kvresult_convert::msg_and_error::codes_api::API_KEY_NOT_FOUND
+            {
+                return Ok(false);
+            }
+            // For other errors, propagate the error
+            crate::rpcresp_kvresult_convert::try_from_code(
+                resp.error_code,
+                resp.error_json.clone(),
+            )?;
+            unreachable!("error path should have returned above");
+        }
+
+        Ok(resp.exists)
+    }
+
+    /// Get metadata for a key without transferring data
+    pub async fn get_meta(&self, key: &str) -> KvResult<GetMetaResp> {
+        if !self.view.register_shutdown_poller().is_running() {
+            return Err(KvError::Api(ApiError::SystemShutdown {
+                detail: "ClientKvApi is shutting down; rejecting get_meta".to_string(),
+            }));
+        }
+        let req = MsgPack {
+            serialize_part: GetMetaReq {
+                key: key.to_string(),
+            },
+            raw_bytes: Vec::new(),
+        };
+
+        // 获取 master 节点 ID
+        let master_node_id = self
+            .view
+            .cluster_manager()
+            .find_or_wait_master_node()
+            .await?;
+
+        // 调用 RPC
+        let resp = self
+            .rpc_caller_get_meta
+            .call(self.view.p2p_module(), master_node_id.into(), req, None, 0)
+            .await
+            .map_err(KvError::from)?;
+
+        Ok(resp.serialize_part)
+    }
+
+    /// 开始 Get 操作，获取数据位置和信息
+    pub async fn get_start(&self, key: &str) -> KvResult<GetStartResp> {
+        if !self.view.register_shutdown_poller().is_running() {
+            return Err(KvError::Api(ApiError::SystemShutdown {
+                detail: "ClientKvApi is shutting down; rejecting get_start".to_string(),
+            }));
+        }
+        let req = MsgPack {
+            serialize_part: GetStartReq {
+                key: key.to_string(),
+            },
+            raw_bytes: Vec::new(),
+        };
+
+        // 获取 master 节点 ID
+        let master_node_id = self
+            .view
+            .cluster_manager()
+            .find_or_wait_master_node()
+            .await?;
+
+        // 调用 RPC
+        let resp = self
+            .rpc_caller_get_start
+            .call(self.view.p2p_module(), master_node_id.into(), req, None, 0)
+            .await
+            .map_err(KvError::from)?;
+
+        Ok(resp.serialize_part)
+    }
+
+    /// 撤销 Get 操作，释放已分配的资源
+    pub async fn get_revoke(&self, get_id: u64) -> KvResult<()> {
+        self.get_revoke_inner(get_id, false, GET_TERMINAL_RPC_TIMEOUT, 0)
+            .await
+    }
+
+    pub(super) async fn get_revoke_ssd_source(&self, get_id: u64) -> KvResult<()> {
+        self.get_revoke_inner(get_id, true, GET_TERMINAL_RPC_TIMEOUT, 0)
+            .await
+    }
+
+    pub(super) async fn finish_ssd_source_done(
+        &self,
+        get_id: u64,
+        deadline: Instant,
+    ) -> KvResult<GetDoneResp> {
+        let shutdown_poller = self.view.register_shutdown_poller();
+        if !self.shutdown_gate.is_accepting() || !shutdown_poller.is_running() {
+            return Err(KvError::Api(ApiError::SystemShutdown {
+                detail: format!("shutdown interrupted source-owned GetDone for get_id={get_id}"),
+            }));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Self::ssd_terminal_timeout(
+                get_id,
+                "GetDone",
+                Duration::ZERO,
+            ));
+        }
+        let attempt_timeout = remaining.min(SSD_SOURCE_TERMINAL_ATTEMPT_TIMEOUT);
+        let done = tokio::time::timeout(
+            attempt_timeout,
+            self.get_done_inner(get_id, SSD_STAGE_RPC_TIMEOUT, 0),
+        )
+        .await
+        .map_err(|_| Self::ssd_terminal_timeout(get_id, "GetDone", attempt_timeout))??;
+        crate::rpcresp_kvresult_convert::try_from_code(done.error_code, done.error_json.clone())?;
+        Ok(done)
+    }
+
+    pub(super) async fn finish_ssd_source_revoke(
+        &self,
+        get_id: u64,
+        drop_ssd_source: bool,
+        deadline: Instant,
+    ) -> KvResult<()> {
+        let shutdown_poller = self.view.register_shutdown_poller();
+        let mut attempt = 0u32;
+        let mut last_error = None;
+        loop {
+            if !self.shutdown_gate.is_accepting() || !shutdown_poller.is_running() {
+                return Err(last_error.unwrap_or_else(|| {
+                    KvError::Api(ApiError::SystemShutdown {
+                        detail: format!(
+                            "shutdown interrupted source-owned GetRevoke for get_id={get_id}"
+                        ),
+                    })
+                }));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(last_error.unwrap_or_else(|| {
+                    Self::ssd_terminal_timeout(get_id, "GetRevoke", Duration::ZERO)
+                }));
+            }
+
+            attempt = attempt.saturating_add(1);
+            let attempt_timeout = remaining.min(SSD_SOURCE_TERMINAL_ATTEMPT_TIMEOUT);
+            let result = tokio::time::timeout(
+                attempt_timeout,
+                self.get_revoke_inner(get_id, drop_ssd_source, SSD_STAGE_RPC_TIMEOUT, 0),
+            )
+            .await
+            .map_err(|_| Self::ssd_terminal_timeout(get_id, "GetRevoke", attempt_timeout))
+            .and_then(|result| result);
+            match result {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    if matches!(
+                        &err,
+                        KvError::P2p(crate::p2p::P2PError::InvalidRpcTimeout { .. })
+                            | KvError::Api(ApiError::InvalidArgument { .. })
+                    ) {
+                        return Err(err);
+                    }
+                    if attempt == 1 || attempt.is_multiple_of(10) {
+                        tracing::warn!(
+                            get_id,
+                            attempt,
+                            error = %err,
+                            "Retrying source-owned SSD GetRevoke terminal report"
+                        );
+                    }
+                    last_error = Some(err);
+                }
+            }
+
+            let backoff_ms = 100u64
+                .saturating_mul(1u64 << attempt.saturating_sub(1).min(3))
+                .min(1_000);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                continue;
+            }
+            tokio::time::sleep(Duration::from_millis(backoff_ms).min(remaining)).await;
+        }
+    }
+
+    fn ssd_terminal_timeout(get_id: u64, operation: &str, timeout: Duration) -> KvError {
+        KvError::Api(ApiError::GetTimeout {
+            timeout_ms: timeout.as_millis() as u64,
+            detail: format!("source-owned SSD {operation} timed out for get_id={get_id}"),
+        })
+    }
+
+    async fn get_revoke_inner(
+        &self,
+        get_id: u64,
+        drop_ssd_source: bool,
+        rpc_timeout: Duration,
+        max_retries: usize,
+    ) -> KvResult<()> {
+        let req = MsgPack {
+            serialize_part: GetRevokeReq {
+                get_id,
+                drop_ssd_source,
+            },
+            raw_bytes: Vec::new(),
+        };
+
+        // 获取 master 节点 ID
+        let master_node_id = self
+            .view
+            .cluster_manager()
+            .find_or_wait_master_node()
+            .await?;
+
+        // 调用 RPC
+        let resp = self
+            .rpc_caller_get_revoke
+            .call(
+                self.view.p2p_module(),
+                master_node_id.into(),
+                req,
+                Some(rpc_timeout),
+                max_retries,
+            )
+            .await
+            .map_err(KvError::from)?;
+        crate::rpcresp_kvresult_convert::try_from_code(
+            resp.serialize_part.error_code,
+            resp.serialize_part.error_json,
+        )
+    }
+
+    /// 完成 Get 操作，清理资源
+    pub async fn get_done(&self, get_id: u64) -> KvResult<GetDoneResp> {
+        self.get_done_inner(get_id, GET_TERMINAL_RPC_TIMEOUT, 3)
+            .await
+    }
+
+    async fn get_done_inner(
+        &self,
+        get_id: u64,
+        rpc_timeout: Duration,
+        max_retries: usize,
+    ) -> KvResult<GetDoneResp> {
+        let req = MsgPack {
+            serialize_part: GetDoneReq { get_id },
+            raw_bytes: Vec::new(),
+        };
+
+        // 获取 master 节点 ID
+        let master_node_id = self
+            .view
+            .cluster_manager()
+            .find_or_wait_master_node()
+            .await?;
+
+        // 调用 RPC
+        let resp = self
+            .rpc_caller_get_done
+            .call(
+                self.view.p2p_module(),
+                master_node_id.into(),
+                req,
+                Some(rpc_timeout),
+                max_retries,
+            )
+            .await
+            .map_err(KvError::from)?;
+
+        Ok(resp.serialize_part)
+    }
+}
