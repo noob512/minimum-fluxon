@@ -205,7 +205,7 @@ http://<host-ip-or-domain>:18080/view?cluster_name=demo-kv-cluster&member_kind=k
 ```text
 User-visible processes:
 - etcd (control-plane metadata store)
-- Fluxon cluster node process(es) (the remote peers you address via instance_key/node_id)
+- Bridging L2–L3 cluster node process(es) (the remote peers you address via instance_key/node_id)
 - Your Python process (business code using fluxon_py)
 
 FluxonKvClientConfig (prefer Python dict; YAML also supported)
