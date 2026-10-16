@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for fluxon
+Setup script for Bridging L2–L3
 """
 
 from setuptools import setup, find_packages
@@ -10,7 +10,7 @@ from setup_and_pack.package_contract import PYTHON_DISTRIBUTION_NAME
 
 # Read version from __init__.py
 def get_version():
-    init_file = os.path.join(os.path.dirname(__file__), 'fluxon_py', '__init__.py')
+    init_file = os.path.join(os.path.dirname(__file__), 'Bridging L2–L3_py', '__init__.py')
     with open(init_file, 'r', encoding='utf-8') as f:
         for line in f:
             if line.startswith('__version__'):
@@ -24,7 +24,7 @@ def get_long_description():
         with open(readme_file, 'r', encoding='utf-8') as f:
             return f.read()
     return (
-        "Fluxon is a high-performance distributed KV Cache and RPC system for AI workloads. "
+        "Bridging L2–L3 is a high-performance distributed KV Cache and RPC system for AI workloads. "
         "This package provides the Python client APIs and service/monitoring utilities."
     )
 
@@ -51,19 +51,19 @@ _extras = {
 setup(
     name=PYTHON_DISTRIBUTION_NAME,
     version=get_version(),
-    description='Fluxon - high-performance distributed KV Cache and RPC for AI workloads',
+    description='Bridging L2–L3 - high-performance distributed KV Cache and RPC for AI workloads',
     long_description=get_long_description(),
     long_description_content_type='text/markdown',
     author='TeleAI Infra Team',
-    url='https://github.com/Tele-AI/Fluxon',
+    url='https://github.com/Tele-AI/Bridging L2–L3',
     project_urls={
-        'Documentation': 'https://tele-ai.github.io/Fluxon/',
-        'Issues': 'https://github.com/Tele-AI/Fluxon/issues',
-        'Source': 'https://github.com/Tele-AI/Fluxon',
+        'Documentation': 'https://tele-ai.github.io/Bridging L2–L3/',
+        'Issues': 'https://github.com/Tele-AI/Bridging L2–L3/issues',
+        'Source': 'https://github.com/Tele-AI/Bridging L2–L3',
     },
     license='Apache-2.0',
     license_files=('LICENSE',),
-    packages=find_packages(include=["fluxon_py", "fluxon_py.*"]),
+    packages=find_packages(include=["Bridging L2–L3_py", "Bridging L2–L3_py.*"]),
     python_requires='>=3.10',
     install_requires=get_install_requires(),
     extras_require=_extras,
@@ -79,7 +79,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'kvcache-server=fluxon_py.__main__:main',
+            'kvcache-server=Bridging L2–L3_py.__main__:main',
         ],
     },
     include_package_data=True,

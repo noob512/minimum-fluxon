@@ -11,7 +11,7 @@ pip install -e .
 ## Rust
 
 ```bash
-cargo build --manifest-path fluxon_rs/Cargo.toml
+cargo build --manifest-path Bridging L2–L3_rs/Cargo.toml
 ```
 
 Configure the KV master and client using the examples in `examples/` and the KV-RPC guide.

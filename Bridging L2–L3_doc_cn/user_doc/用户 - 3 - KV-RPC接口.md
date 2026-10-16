@@ -6,7 +6,7 @@
 
 `cluster_name`、`instance_key`、`etcd` 等前置概念见 [架构和概念](用户%20-%201%20-%20架构和概念.md)。
 
-Python 业务代码优先直接在代码里写 Python dict，并传给 `FluxonKvClientConfig(...)`；YAML 更适合独立进程启动、supervisor、部署和示例环境。
+Python 业务代码优先直接在代码里写 Python dict，并传给 `Bridging L2–L3KvClientConfig(...)`；YAML 更适合独立进程启动、supervisor、部署和示例环境。
 
 ### 服务平面
 
@@ -16,14 +16,14 @@ Python 业务代码优先直接在代码里写 Python dict，并传给 `FluxonKv
 
 - `greptime`：用于标准监控链路。安装与启动见 [用户 - 2 - 服务平面](./用户%20-%202%20-%20服务平面.md)
 - `etcd`：KV 控制面元数据存储。安装与启动见 [用户 - 2 - 服务平面](./用户%20-%202%20-%20服务平面.md)
-- `start_kv_master_process(...)`：启动 `fluxonkv master`
+- `start_kv_master_process(...)`：启动 `Bridging L2–L3kv master`
 - `start_owner_kvclient_process(...)`：启动 `owner`
 
 最小可运行示例脚本如下。这个脚本只启动 Bridging L2–L3 自己的角色；`etcd` / `greptime` 仍按服务平面文档单独启动，并且默认假设：
 
 - `etcd` 在 `127.0.0.1:2379`
 - `greptime` HTTP 在 `127.0.0.1:34030`
-- 当前 `python3` 所在环境已经安装统一的 `fluxon_py-*.whl`；安装方式见 [用户 - 0 - 安装](./用户%20-%200%20-%20安装.md)
+- 当前 `python3` 所在环境已经安装统一的 `Bridging L2–L3_py-*.whl`；安装方式见 [用户 - 0 - 安装](./用户%20-%200%20-%20安装.md)
 
 对应示例脚本：`examples/start_master_owner.py`
 
@@ -39,19 +39,19 @@ import argparse
 
 from pathlib import Path
 
-from fluxon_py.runtime import (
+from Bridging L2–L3_py.runtime import (
     start_kv_master_process,
     start_owner_kvclient_process,
     wait_subproc_or_ctrlc,
 )
-from fluxon_py.runtime.process_runner import ManagedSubprocess
+from Bridging L2–L3_py.runtime.process_runner import ManagedSubprocess
 
 ETCD_ENDPOINT = "127.0.0.1:2379"
 GREPTIME_HTTP_PORT = 34030
 GREPTIME_BASE_URL = f"http://127.0.0.1:{GREPTIME_HTTP_PORT}"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = Path("/dev/shm/fluxon_kv_demo").resolve()
-WORKDIR = Path("/tmp/fluxon_kv_demo/runtime").resolve()
+SHARE_MEM_PATH = Path("/dev/shm/Bridging L2–L3_kv_demo").resolve()
+WORKDIR = Path("/tmp/Bridging L2–L3_kv_demo/runtime").resolve()
 MASTER_PORT = 31000
 MASTER_UI_PORT = 18080
 MASTER_INSTANCE_KEY = "demo_kv_master"
@@ -95,24 +95,24 @@ def main() -> None:
         )
     )
 
-    print(f"[fluxon_kv] share_mem_path: {SHARE_MEM_PATH}")
-    print(f"[fluxon_kv] etcd endpoint: {ETCD_ENDPOINT}")
-    print(f"[fluxon_kv] greptime base url: {GREPTIME_BASE_URL}")
-    print(f"[fluxon_kv] start master in this script: {args.with_master}")
+    print(f"[Bridging L2–L3_kv] share_mem_path: {SHARE_MEM_PATH}")
+    print(f"[Bridging L2–L3_kv] etcd endpoint: {ETCD_ENDPOINT}")
+    print(f"[Bridging L2–L3_kv] greptime base url: {GREPTIME_BASE_URL}")
+    print(f"[Bridging L2–L3_kv] start master in this script: {args.with_master}")
     if master_stdout_log is not None:
-        print(f"[fluxon_kv] master stdout log: {master_stdout_log}")
+        print(f"[Bridging L2–L3_kv] master stdout log: {master_stdout_log}")
         print(
-            "[fluxon_kv] kv web ui: "
+            "[Bridging L2–L3_kv] kv web ui: "
             f"http://<host-ip-or-domain>:{MASTER_UI_PORT}/view?cluster_name={CLUSTER_NAME}&member_kind=kv"
         )
     else:
-        print("[fluxon_kv] master stdout log: disabled by --without-master")
-    print(f"[fluxon_kv] owner stdout log: {owner_stdout_log}")
+        print("[Bridging L2–L3_kv] master stdout log: disabled by --without-master")
+    print(f"[Bridging L2–L3_kv] owner stdout log: {owner_stdout_log}")
     stack_label = "master and owner" if args.with_master else "owner"
-    print(f"[fluxon_kv] waiting for Ctrl-C to stop {stack_label}")
+    print(f"[Bridging L2–L3_kv] waiting for Ctrl-C to stop {stack_label}")
     wait_subproc_or_ctrlc(
         children,
-        on_ctrlc=lambda: print(f"[fluxon_kv] caught Ctrl-C, stopping {stack_label}"),
+        on_ctrlc=lambda: print(f"[Bridging L2–L3_kv] caught Ctrl-C, stopping {stack_label}"),
     )
 
 
@@ -162,7 +162,7 @@ def build_owner_config() -> dict:
             "dram": OWNER_DRAM_BYTES,
             "vram": {},
         },
-        "fluxonkv_spec": {
+        "Bridging L2–L3kv_spec": {
             "etcd_addresses": [ETCD_ENDPOINT],
             "cluster_name": CLUSTER_NAME,
             "share_mem_path": str(SHARE_MEM_PATH),
@@ -206,9 +206,9 @@ http://<host-ip-or-domain>:18080/view?cluster_name=demo-kv-cluster&member_kind=k
 User-visible processes:
 - etcd (control-plane metadata store)
 - Bridging L2–L3 cluster node process(es) (the remote peers you address via instance_key/node_id)
-- Your Python process (business code using fluxon_py)
+- Your Python process (business code using Bridging L2–L3_py)
 
-FluxonKvClientConfig (prefer Python dict; YAML also supported)
+Bridging L2–L3KvClientConfig (prefer Python dict; YAML also supported)
             |
             v
 new_store(cfg) -> KvClient (one instance in your Python process)
@@ -229,8 +229,8 @@ api.close() -> Result[OkNone, ApiError]
 
 ### 核心对象（Python）
 
-- `FluxonKvClientConfig`：配置对象，优先直接从 Python dict 创建，也支持从 YAML 文件加载。
-- `new_store(config: FluxonKvClientConfig) -> Result[KvClient, ApiError]`：创建 KV client 实例。
+- `Bridging L2–L3KvClientConfig`：配置对象，优先直接从 Python dict 创建，也支持从 YAML 文件加载。
+- `new_store(config: Bridging L2–L3KvClientConfig) -> Result[KvClient, ApiError]`：创建 KV client 实例。
 - `KvClient`：统一入口，同时提供 KV 读写与节点间调用。
 - `MemHolder`：`get_blocking(...)` 成功后的读取结果持有者，`access()` 取得 `FlatDict`。
 - `PutOptionalArgs`：`put_blocking(...)` 的可选参数对象，当前常用字段是 `lease_id`。
@@ -254,18 +254,18 @@ KV value 和节点间调用的 payload 统一为 flat dict：
 ```python
 #!/usr/bin/env python3
 
-from fluxon_py import FluxonKvClientConfig, new_store
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig, new_store
 
 INSTANCE_KEY = "demo_kv_external"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = "/dev/shm/fluxon_kv_demo"
+SHARE_MEM_PATH = "/dev/shm/Bridging L2–L3_kv_demo"
 
 
 def main() -> None:
-    cfg = FluxonKvClientConfig(
+    cfg = Bridging L2–L3KvClientConfig(
         {
             "instance_key": INSTANCE_KEY,
-            "fluxonkv_spec": {
+            "Bridging L2–L3kv_spec": {
                 "cluster_name": CLUSTER_NAME,
                 "share_mem_path": SHARE_MEM_PATH,
             },
@@ -313,19 +313,19 @@ if __name__ == "__main__":
 上面的 KV 最小示例如果要打开更详细的用户进程日志，直接在启动 Python 进程前设置：
 
 ```bash
-FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
+Bridging L2–L3_LOG=DEBUG python3 examples/external_put_get_del.py
 ```
 
 日志相关对象如下：
 
-- `FLUXON_LOG`：控制当前 Python 业务进程 console logger 的输出门限
-- Bridging L2–L3 Python 侧 logger 会读取 `FLUXON_LOG`；合法值是 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`，默认 `INFO`
+- `Bridging L2–L3_LOG`：控制当前 Python 业务进程 console logger 的输出门限
+- Bridging L2–L3 Python 侧 logger 会读取 `Bridging L2–L3_LOG`；合法值是 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`，默认 `INFO`
 - `log_dir`：`master` 本地日志 authority
 - `share_mem_path`：KV 共享 bundle 根目录，只承载 `mmap.file`、`shared.json` 和 peer metadata
 - `large_file_paths`：owner 侧大文件根目录，日志、profile、cache 等运行时资产都从这里派生
 - `store.third_party_logs_dir().unwrap(...)`：返回 `{large_file_paths[0]}/{cluster_name}_cluster_third_party_logs`。第三方 Python 组件应只在这个根目录下派生自己的子目录，这样目录使用更收束，Bridging L2–L3 观测平面也能统一感知和采集这些文件日志。
 
-如果服务平面的 `master.monitoring.otlp_log_api` 已经配置，后台服务日志还会继续采集到 Greptime 的 `fluxon_logs` 表。
+如果服务平面的 `master.monitoring.otlp_log_api` 已经配置，后台服务日志还会继续采集到 Greptime 的 `Bridging L2–L3_logs` 表。
 
 `put_blocking(key: str, value: FlatDict, opts: Optional[PutOptionalArgs] = None) -> Result[OkNone, ApiError]`
 
@@ -397,12 +397,12 @@ FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
 import argparse
 import signal
 
-from fluxon_py import FluxonKvClientConfig, new_store
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig, new_store
 
 RPC_SERVER_INSTANCE_KEY = "demo_rpc_server"
 RPC_CLIENT_INSTANCE_KEY = "demo_rpc_client"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = "/dev/shm/fluxon_kv_demo"
+SHARE_MEM_PATH = "/dev/shm/Bridging L2–L3_kv_demo"
 
 
 def main() -> None:
@@ -430,11 +430,11 @@ def main() -> None:
     raise AssertionError("unreachable")
 
 
-def _build_config(*, instance_key: str) -> FluxonKvClientConfig:
-    return FluxonKvClientConfig(
+def _build_config(*, instance_key: str) -> Bridging L2–L3KvClientConfig:
+    return Bridging L2–L3KvClientConfig(
         {
             "instance_key": instance_key,
-            "fluxonkv_spec": {
+            "Bridging L2–L3kv_spec": {
                 "cluster_name": CLUSTER_NAME,
                 "share_mem_path": SHARE_MEM_PATH,
             },
@@ -500,7 +500,7 @@ if __name__ == "__main__":
 KV 环境至少会直接接触两类配置对象：
 
 - master 配置：启动控制面进程，负责 etcd、成员路由、监控和 master 日志目录
-- client / external 配置：创建 `FluxonKvClientConfig`，供 `new_store(...)` 附着到同机 owner 并发起 KV / RPC
+- client / external 配置：创建 `Bridging L2–L3KvClientConfig`，供 `new_store(...)` 附着到同机 owner 并发起 KV / RPC
 
 业务代码直接编辑的通常是第二类配置对象，并且通常直接编辑 Python dict；需要先把 KV 集群拉起来时，两类配置对象都要准备，此时再把配置落成 YAML 给 CLI / runtime 进程使用。
 
@@ -514,7 +514,7 @@ cluster_name: demo-kv-cluster
 port: 31000
 etcd_endpoints:
   - 127.0.0.1:2379
-log_dir: /var/lib/fluxon/master_logs
+log_dir: /var/lib/Bridging L2–L3/master_logs
 ```
 
 理解方式：
@@ -524,17 +524,17 @@ log_dir: /var/lib/fluxon/master_logs
 
 #### 2) client / external 配置
 
-业务代码里直接把 Python dict 传给 `FluxonKvClientConfig(...)` 的构造方式如下：
+业务代码里直接把 Python dict 传给 `Bridging L2–L3KvClientConfig(...)` 的构造方式如下：
 
 ```python
-from fluxon_py import FluxonKvClientConfig
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig
 
-cfg = FluxonKvClientConfig(
+cfg = Bridging L2–L3KvClientConfig(
     {
         "instance_key": "my-kv-client-1",
-        "fluxonkv_spec": {
+        "Bridging L2–L3kv_spec": {
             "cluster_name": "demo-kv-cluster",
-            "share_mem_path": "/dev/shm/fluxon",
+            "share_mem_path": "/dev/shm/Bridging L2–L3",
         },
     }
 )
@@ -543,9 +543,9 @@ cfg = FluxonKvClientConfig(
 如果配置已经落成 YAML 文件，也可以直接从文件构造：
 
 ```python
-from fluxon_py import FluxonKvClientConfig
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig
 
-cfg = FluxonKvClientConfig.from_file("./kv_external.yaml")
+cfg = Bridging L2–L3KvClientConfig.from_file("./kv_external.yaml")
 ```
 
 这两种方式最终得到的是同一个配置对象，后续都传给 `new_store(cfg)`。
@@ -556,11 +556,11 @@ cfg = FluxonKvClientConfig.from_file("./kv_external.yaml")
 # 当前 Python 进程 / external client 的唯一实例标识
 instance_key: my-kv-client-1
 
-fluxonkv_spec:
+Bridging L2–L3kv_spec:
   # 目标集群名；必须和 master / owner 保持一致
   cluster_name: demo-kv-cluster
   # 共享 bundle 根目录；运行时会在其下拼接 cluster_name
-  share_mem_path: /dev/shm/fluxon
+  share_mem_path: /dev/shm/Bridging L2–L3
   # 可选：覆盖当前 client 的 P2P 监听端口
   p2p_listen_port: 31001
 ```
@@ -578,14 +578,14 @@ contribute_to_cluster_pool_size:
   # VRAM 贡献；这里为空表示不贡献显存
   vram: {}
 
-fluxonkv_spec:
+Bridging L2–L3kv_spec:
   # owner 连接 etcd 的地址列表
   etcd_addresses:
     - 127.0.0.1:2379
   # 目标集群名；必须和 master / external 保持一致
   cluster_name: demo-kv-cluster
   # 共享 bundle 根目录；运行时会在其下拼接 cluster_name
-  share_mem_path: /dev/shm/fluxon
+  share_mem_path: /dev/shm/Bridging L2–L3
   # owner 自己的 P2P 监听端口
   p2p_listen_port: 31000
   # owner 所属子集群标签
@@ -596,9 +596,9 @@ fluxonkv_spec:
 
 - `share_mem_path`：共享 bundle 根目录；运行时拼接 `cluster_name` 后，同时承载 `mmap.file`、`shared.json` 和 peer metadata
 - `large_file_paths`：owner 独占的大文件 authority，日志、profile、cache 等运行时资产都从这里派生
-- `FLUXON_LOG`：用户 Python 进程 console log 的门限，不写时默认 `INFO`
+- `Bridging L2–L3_LOG`：用户 Python 进程 console log 的门限，不写时默认 `INFO`
 
-zero-contribution external 模式下有一个硬约束：`fluxonkv_spec.etcd_addresses`、`fluxonkv_spec.sub_cluster`、`fluxonkv_spec.large_file_paths`、`fluxonkv_spec.redis_compat` 这类 owner 侧字段不应出现。
+zero-contribution external 模式下有一个硬约束：`Bridging L2–L3kv_spec.etcd_addresses`、`Bridging L2–L3kv_spec.sub_cluster`、`Bridging L2–L3kv_spec.large_file_paths`、`Bridging L2–L3kv_spec.redis_compat` 这类 owner 侧字段不应出现。
 
 #### 3) 网络与 TCP thread reactor 调优
 

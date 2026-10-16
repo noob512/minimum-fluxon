@@ -3,19 +3,19 @@
 import argparse
 from pathlib import Path
 
-from fluxon_py.runtime import (
+from Bridging L2–L3_py.runtime import (
     start_kv_master_process,
     start_owner_kvclient_process,
     wait_subproc_or_ctrlc,
 )
-from fluxon_py.runtime.process_runner import ManagedSubprocess
+from Bridging L2–L3_py.runtime.process_runner import ManagedSubprocess
 
 ETCD_ENDPOINT = "127.0.0.1:2379"
 GREPTIME_HTTP_PORT = 34030
 GREPTIME_BASE_URL = f"http://127.0.0.1:{GREPTIME_HTTP_PORT}"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = Path("/dev/shm/fluxon_kv_demo").resolve()
-WORKDIR = Path("/tmp/fluxon_kv_demo/runtime").resolve()
+SHARE_MEM_PATH = Path("/dev/shm/Bridging L2–L3_kv_demo").resolve()
+WORKDIR = Path("/tmp/Bridging L2–L3_kv_demo/runtime").resolve()
 MASTER_PORT = 31000
 MASTER_INSTANCE_KEY = "demo_kv_master"
 OWNER_INSTANCE_KEY = "demo_kv_owner"
@@ -62,20 +62,20 @@ def main() -> None:
         )
     )
 
-    print(f"[fluxon_kv] share_mem_path: {SHARE_MEM_PATH}")
-    print(f"[fluxon_kv] etcd endpoint: {ETCD_ENDPOINT}")
-    print(f"[fluxon_kv] greptime base url: {GREPTIME_BASE_URL}")
-    print(f"[fluxon_kv] start master in this script: {args.with_master}")
+    print(f"[Bridging L2–L3_kv] share_mem_path: {SHARE_MEM_PATH}")
+    print(f"[Bridging L2–L3_kv] etcd endpoint: {ETCD_ENDPOINT}")
+    print(f"[Bridging L2–L3_kv] greptime base url: {GREPTIME_BASE_URL}")
+    print(f"[Bridging L2–L3_kv] start master in this script: {args.with_master}")
     if master_stdout_log is not None:
-        print(f"[fluxon_kv] master stdout log: {master_stdout_log}")
+        print(f"[Bridging L2–L3_kv] master stdout log: {master_stdout_log}")
     else:
-        print("[fluxon_kv] master stdout log: disabled by --without-master")
-    print(f"[fluxon_kv] owner stdout log: {owner_stdout_log}")
+        print("[Bridging L2–L3_kv] master stdout log: disabled by --without-master")
+    print(f"[Bridging L2–L3_kv] owner stdout log: {owner_stdout_log}")
     stack_label = "master and owner" if args.with_master else "owner"
-    print(f"[fluxon_kv] waiting for Ctrl-C to stop {stack_label}")
+    print(f"[Bridging L2–L3_kv] waiting for Ctrl-C to stop {stack_label}")
     wait_subproc_or_ctrlc(
         children,
-        on_ctrlc=lambda: print(f"[fluxon_kv] caught Ctrl-C, stopping {stack_label}"),
+        on_ctrlc=lambda: print(f"[Bridging L2–L3_kv] caught Ctrl-C, stopping {stack_label}"),
     )
 
 
@@ -122,7 +122,7 @@ def build_owner_config() -> dict:
             "dram": OWNER_DRAM_BYTES,
             "vram": {},
         },
-        "fluxonkv_spec": {
+        "Bridging L2–L3kv_spec": {
             "etcd_addresses": [ETCD_ENDPOINT],
             "cluster_name": CLUSTER_NAME,
             "share_mem_path": str(SHARE_MEM_PATH),

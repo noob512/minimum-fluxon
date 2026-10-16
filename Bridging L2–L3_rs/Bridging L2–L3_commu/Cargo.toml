@@ -1,0 +1,38 @@
+[package]
+name = "Bridging L2–L3_commu"
+version = "0.2.4"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+cluster_manager_app_logic_ext = []
+fastws_transport = []
+sockudo_ws_transport = []
+tcp_transport = []
+tcp_thread_transport = []
+tquic_transport = []
+tquic_transport_v2 = ["tquic_transport"]
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bitcode = { workspace = true }
+bytes = { workspace = true }
+crossbeam = "0.8"
+Bridging L2–L3_commu_contract = { path = "../Bridging L2–L3_commu_contract" }
+Bridging L2–L3_commu_closed_sdk_consumer = { path = "../Bridging L2–L3_commu_closed_sdk_consumer" }
+Bridging L2–L3_framework = { path = "../Bridging L2–L3_framework" }
+Bridging L2–L3_framework_compiled = { path = "../Bridging L2–L3_framework_compiled" }
+Bridging L2–L3_observability = { path = "../Bridging L2–L3_observability" }
+Bridging L2–L3_util = { path = "../Bridging L2–L3_util" }
+libc = { workspace = true }
+limit_thirdparty = { path = "../limit_thirdparty" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+paste = "1.0"

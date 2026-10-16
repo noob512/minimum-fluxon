@@ -1,0 +1,44 @@
+[package]
+name = "Bridging L2–L3_pyo3"
+version = "0.2.4"
+edition = "2024"
+
+[lib]
+name = "Bridging L2–L3_pyo3"
+crate-type = ["cdylib"]
+
+[features]
+default = ["p2p_transfer", "tcp_thread_transport"]
+p2p_transfer = ["Bridging L2–L3_kv/p2p_transfer"]
+tquic_transport = ["Bridging L2–L3_kv/tquic_transport"]
+tquic_transport_v2 = ["Bridging L2–L3_kv/tquic_transport_v2"]
+fastws_transport = ["Bridging L2–L3_kv/fastws_transport"]
+sockudo_ws_transport = ["Bridging L2–L3_kv/sockudo_ws_transport"]
+tcp_transport = ["Bridging L2–L3_kv/tcp_transport"]
+tcp_thread_transport = ["Bridging L2–L3_kv/tcp_thread_transport"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+etcd-client = { workspace = true }
+crossbeam-channel = { workspace = true }
+hyper = { workspace = true }
+libc = { workspace = true }
+bytes = "1"
+limit_thirdparty = { path = "../limit_thirdparty" }
+
+Bridging L2–L3_commu = { path = "../Bridging L2–L3_commu", default-features = false }
+Bridging L2–L3_kv = { path = "../Bridging L2–L3_kv", default-features = false }
+Bridging L2–L3_framework = { path = "../Bridging L2–L3_framework" }
+Bridging L2–L3_framework_compiled = { path = "../Bridging L2–L3_framework_compiled" }
+Bridging L2–L3_util = { path = "../Bridging L2–L3_util" }

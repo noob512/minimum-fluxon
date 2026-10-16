@@ -1,0 +1,4 @@
+kv_svc_type: Bridging L2–L3
+etcd_address: 127.0.0.1:2379
+cluster_name: Bridging L2–L3-example-cluster
+share_mem_path: /tmp/Bridging L2–L3-example-cluster/shm

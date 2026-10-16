@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 
-from fluxon_py import FluxonKvClientConfig, new_store
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig, new_store
 
 INSTANCE_KEY = "demo_kv_external"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = "/dev/shm/fluxon_kv_demo"
+SHARE_MEM_PATH = "/dev/shm/Bridging L2–L3_kv_demo"
 
 
 def main() -> None:
-    cfg = FluxonKvClientConfig(
+    cfg = Bridging L2–L3KvClientConfig(
         {
             "instance_key": INSTANCE_KEY,
-            "fluxonkv_spec": {
+            "Bridging L2–L3kv_spec": {
                 "cluster_name": CLUSTER_NAME,
                 "share_mem_path": SHARE_MEM_PATH,
             },

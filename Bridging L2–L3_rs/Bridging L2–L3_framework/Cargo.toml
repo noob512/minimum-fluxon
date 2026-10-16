@@ -1,0 +1,18 @@
+[package]
+name = "Bridging L2–L3_framework"
+version = "0.2.4"
+edition = "2024"
+
+[dependencies]
+async-trait = { workspace = true }
+paste = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+limit_thirdparty = { path = "../limit_thirdparty" }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+Bridging L2–L3_framework_compiled = { path = "../Bridging L2–L3_framework_compiled" }
+Bridging L2–L3_util = { path = "../Bridging L2–L3_util" }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }

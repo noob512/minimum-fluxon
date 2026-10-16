@@ -38,9 +38,9 @@ A `put` publishes a readable owner value and may persist it to the local SSD tie
 
 ## Public Python surface
 
-The Python layer exposes the following stable groups through `fluxon_py`:
+The Python layer exposes the following stable groups through `Bridging L2–L3_py`:
 
-- `FluxonKvClientConfig` and `new_store(...)` for client construction.
+- `Bridging L2–L3KvClientConfig` and `new_store(...)` for client construction.
 - `put`, `get`, `remove`, `is_exist`, `get_size`, and `count_prefix` for KV operations.
 - `MemHolder` for native value access and explicit lifetime management.
 - `rpc_call` and `rpc_register` for typed user RPC.
@@ -52,7 +52,7 @@ The detailed argument and lifecycle rules are documented in the KV-RPC interface
 
 - Linux for the native runtime and SSD/RDMA paths.
 - Python 3.10 or newer.
-- The Rust toolchain pinned by [`fluxon_rs/rust-toolchain.toml`](./fluxon_rs/rust-toolchain.toml).
+- The Rust toolchain pinned by [`Bridging L2–L3_rs/rust-toolchain.toml`](./Bridging L2–L3_rs/rust-toolchain.toml).
 - An etcd instance for cluster metadata and leases.
 - A GreptimeDB endpoint when the monitoring configuration is enabled.
 
@@ -67,10 +67,10 @@ python3 -m pip install -e .
 Build the Rust workspace:
 
 ```bash
-cargo build --manifest-path fluxon_rs/Cargo.toml
+cargo build --manifest-path Bridging L2–L3_rs/Cargo.toml
 ```
 
-The Python package imports from `fluxon_py`. The native extension is produced by the Rust workspace when a platform-specific binding is required.
+The Python package imports from `Bridging L2–L3_py`. The native extension is produced by the Rust workspace when a platform-specific binding is required.
 
 ## Minimal local workflow
 
@@ -91,8 +91,8 @@ The example writes a value, reads it through the KV client, removes it, and chec
 
 ## Repository layout
 
-- `fluxon_py/` — Python client, configuration, monitoring, and runtime helpers.
-- `fluxon_rs/` — Rust KV implementation, transport, RPC, observability, and Python binding.
+- `Bridging L2–L3_py/` — Python client, configuration, monitoring, and runtime helpers.
+- `Bridging L2–L3_rs/` — Rust KV implementation, transport, RPC, observability, and Python binding.
 - `examples/` — small KV Cache and RPC examples.
 - `Bridging L2–L3_doc_en/` — English installation, architecture, and KV-RPC documentation.
 - `Bridging L2–L3_doc_cn/` — Chinese installation, architecture, and KV-RPC documentation.
@@ -116,9 +116,9 @@ The design notes cover routing, holder lifetimes, Python/Rust zero-copy calls, c
 Run source-only checks from the repository root:
 
 ```bash
-python3 -m compileall -q fluxon_py examples setup.py
-cargo fmt --manifest-path fluxon_rs/Cargo.toml --all -- --check
-cargo metadata --manifest-path fluxon_rs/Cargo.toml --no-deps --format-version 1
+python3 -m compileall -q Bridging L2–L3_py examples setup.py
+cargo fmt --manifest-path Bridging L2–L3_rs/Cargo.toml --all -- --check
+cargo metadata --manifest-path Bridging L2–L3_rs/Cargo.toml --no-deps --format-version 1
 ```
 
 Full runtime tests additionally require the native toolchain and configured etcd and monitoring services. The package is intended for source inspection and focused evaluation; it is not a release bundle.

@@ -1,0 +1,17 @@
+[package]
+name = "Bridging L2–L3_commu_closed_sdk_consumer"
+version = "0.2.4"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+bitcode = { workspace = true }
+bytes = { workspace = true }
+Bridging L2–L3_commu_contract = { path = "../Bridging L2–L3_commu_contract" }
+libc = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+serde_json = { workspace = true }

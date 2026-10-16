@@ -1,0 +1,3160 @@
+use crate::rpcresp_kvresult_convert::msg_and_error::{ConfigError, KvResult};
+use Bridging L2–L3_commu::validate_ip_cidr;
+pub use Bridging L2–L3_commu::{
+    ClusterManagerRdmaControlInit, NetworkConfig, ProtocolType, TransferBackendActivationMode,
+    TransferEngineType,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use std::fs;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+/// YAML wrapper to distinguish between:
+/// - key missing: `Option::None`
+/// - key present with null: `Some(YamlNullable::Null)`
+/// - key present with a value: `Some(YamlNullable::Value(T))`
+///
+/// This aligns Rust-side validation with the Python-side "key presence" contract
+/// (some fields are forbidden in certain modes even when explicitly set to null).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum YamlNullable<T> {
+    Null,
+    Value(T),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum SizeBytesYaml {
+    Bytes(u64),
+    Text(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GreptimeOtlpLogConfigYaml {
+    pub otlp_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flush_interval_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_batch_lines: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_queue_lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GreptimeOtlpLogConfig {
+    pub otlp_endpoint: String,
+    pub db_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_name: Option<String>,
+    pub flush_interval_ms: u64,
+    pub max_batch_lines: usize,
+    pub max_queue_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MonitoringConfigYaml {
+    pub prometheus_base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prom_remote_write_url: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub otlp_log_api: Option<GreptimeOtlpLogConfigYaml>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MonitoringConfig {
+    pub prometheus_base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prom_remote_write_url: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub otlp_log_api: Option<GreptimeOtlpLogConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MasterUiConfigYaml {
+    pub http_listen_addr: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MasterUiConfig {
+    pub http_listen_addr: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TestSpecTransportMode {
+    TransferOnly,
+    TransferWithRpc,
+}
+
+const DEFAULT_PROTOCOL_TYPE: ProtocolType = ProtocolType::Rdma;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SideTransferRole {
+    Worker,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TcpThreadReactorWaitMode {
+    BusyPoll,
+    EventDriven,
+}
+
+const DEFAULT_SERVER_TCP_REACTOR_WAIT_MODE: TcpThreadReactorWaitMode =
+    TcpThreadReactorWaitMode::BusyPoll;
+const DEFAULT_EXTERNAL_TCP_REACTOR_WAIT_MODE: TcpThreadReactorWaitMode =
+    TcpThreadReactorWaitMode::EventDriven;
+
+impl Default for TcpThreadReactorWaitMode {
+    fn default() -> Self {
+        DEFAULT_SERVER_TCP_REACTOR_WAIT_MODE
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KvSsdUringMode {
+    SingleBuffer,
+    Iovec,
+}
+
+impl Default for KvSsdUringMode {
+    fn default() -> Self {
+        Self::SingleBuffer
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KvSsdStorageBackend {
+    Native,
+    Foyer,
+}
+
+impl Default for KvSsdStorageBackend {
+    fn default() -> Self {
+        Self::Native
+    }
+}
+
+const TEST_SPEC_TCP_THREAD_REACTOR_SHARD_COUNT_MIN: u8 = 1;
+const TEST_SPEC_TCP_THREAD_REACTOR_SHARD_COUNT_MAX: u8 = 16;
+const TEST_SPEC_TCP_THREAD_BULK_LANE_COUNT_MIN: u8 = 1;
+const TEST_SPEC_TCP_THREAD_BULK_LANE_COUNT_MAX: u8 = 8;
+const TEST_SPEC_TCP_THREAD_CONTROL_LANE_COUNT_MIN: u8 = 1;
+const TEST_SPEC_TCP_THREAD_CONTROL_LANE_COUNT_MAX: u8 = 8;
+
+fn default_iceoryx_owner_client_busy_poll() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TestSpecConfig {
+    #[serde(default)]
+    pub disable_observability: bool,
+    #[serde(default)]
+    pub disable_master_replica_cache: bool,
+    #[serde(default)]
+    pub disable_prefix_index: bool,
+    #[serde(default)]
+    pub disable_local_ipc: bool,
+    #[serde(default)]
+    pub disable_crossowner_ipc: bool,
+    #[serde(default)]
+    pub enable_iceoryx_logs: bool,
+    #[serde(default)]
+    pub iceoryx_external_busy_poll: bool,
+    #[serde(default = "default_iceoryx_owner_client_busy_poll")]
+    pub iceoryx_owner_client_busy_poll: bool,
+    #[serde(default)]
+    pub prefer_local_placement: bool,
+    #[serde(default)]
+    pub short_circuit_put_payload_path: bool,
+    #[serde(default)]
+    pub skip_put_end_commit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_type: Option<ProtocolType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport_mode: Option<TestSpecTransportMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_thread_reactor_shard_count: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_thread_bulk_lane_count: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_thread_control_lane_count: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_rpc_sync_handler_thread_count: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rdma_device_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_transfer_rpc_fast_path_ready_timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub enable_side_transfer: bool,
+    #[serde(default)]
+    pub side_transfer_worker_count: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_transfer_worker_p2p_port_base: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_transfer_role: Option<SideTransferRole>,
+    #[serde(default)]
+    pub kv_ssd_uring_mode: KvSsdUringMode,
+    #[serde(default)]
+    pub kv_ssd_storage_backend: KvSsdStorageBackend,
+}
+
+impl Default for TestSpecConfig {
+    fn default() -> Self {
+        Self {
+            disable_observability: false,
+            disable_master_replica_cache: false,
+            disable_prefix_index: false,
+            disable_local_ipc: false,
+            disable_crossowner_ipc: false,
+            enable_iceoryx_logs: false,
+            iceoryx_external_busy_poll: false,
+            iceoryx_owner_client_busy_poll: default_iceoryx_owner_client_busy_poll(),
+            prefer_local_placement: false,
+            short_circuit_put_payload_path: false,
+            skip_put_end_commit: false,
+            protocol_type: None,
+            transport_mode: None,
+            tcp_thread_reactor_shard_count: None,
+            tcp_thread_bulk_lane_count: None,
+            tcp_thread_control_lane_count: None,
+            user_rpc_sync_handler_thread_count: None,
+            rdma_device_names: None,
+            require_transfer_rpc_fast_path_ready_timeout_seconds: None,
+            enable_side_transfer: false,
+            side_transfer_worker_count: 0,
+            side_transfer_worker_p2p_port_base: None,
+            side_transfer_role: None,
+            kv_ssd_uring_mode: KvSsdUringMode::default(),
+            kv_ssd_storage_backend: KvSsdStorageBackend::default(),
+        }
+    }
+}
+
+fn validate_test_spec_kv_ssd_backend(test_spec_config: &TestSpecConfig) -> KvResult<()> {
+    if test_spec_config.kv_ssd_storage_backend == KvSsdStorageBackend::Foyer
+        && test_spec_config.kv_ssd_uring_mode != KvSsdUringMode::SingleBuffer
+    {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.kv_ssd_uring_mode is only valid with test_spec_config.kv_ssd_storage_backend=native".to_string(),
+        }
+        .into_kverror());
+    }
+    Ok(())
+}
+
+fn resolve_enable_transfer_rpc_fast_path(
+    default_enabled: bool,
+    test_spec_config: Option<&TestSpecConfig>,
+) -> bool {
+    match test_spec_config.and_then(|cfg| cfg.transport_mode) {
+        Some(TestSpecTransportMode::TransferOnly) => false,
+        Some(TestSpecTransportMode::TransferWithRpc) => true,
+        None => default_enabled,
+    }
+}
+
+fn materialize_default_test_spec_transport_mode(test_spec_config: &mut TestSpecConfig) {
+    if test_spec_config.transport_mode.is_some() {
+        return;
+    }
+    if matches!(
+        test_spec_config.side_transfer_role,
+        Some(SideTransferRole::Worker)
+    ) {
+        return;
+    }
+    test_spec_config.transport_mode = Some(TestSpecTransportMode::TransferWithRpc);
+}
+
+fn normalize_test_spec_rdma_device_names(
+    test_spec_config: &mut TestSpecConfig,
+    transport_mode_was_explicit: bool,
+) -> KvResult<()> {
+    let is_side_transfer_worker = matches!(
+        test_spec_config.side_transfer_role,
+        Some(SideTransferRole::Worker)
+    );
+    if is_side_transfer_worker && test_spec_config.protocol_type.is_some() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.protocol_type is not valid for side-transfer workers; their protocol is derived from the worker role".to_string(),
+        }
+        .into_kverror());
+    }
+    if is_side_transfer_worker && test_spec_config.rdma_device_names.is_some() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.rdma_device_names is not valid for side-transfer workers"
+                .to_string(),
+        }
+        .into_kverror());
+    }
+    let protocol_type = test_spec_config
+        .protocol_type
+        .unwrap_or(DEFAULT_PROTOCOL_TYPE);
+    if matches!(protocol_type, ProtocolType::Tcp) {
+        if test_spec_config.rdma_device_names.is_some() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "test_spec_config.rdma_device_names requires test_spec_config.protocol_type=rdma".to_string(),
+            }
+            .into_kverror());
+        }
+        return Ok(());
+    }
+    if transport_mode_was_explicit && test_spec_config.rdma_device_names.is_none() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "explicit test_spec_config.transport_mode now requires test_spec_config.rdma_device_names to avoid implicit RDMA device selection".to_string(),
+        }
+        .into_kverror());
+    }
+
+    let Some(raw_devices) = test_spec_config.rdma_device_names.take() else {
+        return Ok(());
+    };
+
+    let mut deduped = std::collections::BTreeSet::new();
+    for (idx, raw) in raw_devices.into_iter().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "test_spec_config.rdma_device_names[{}] must be a non-empty string",
+                    idx
+                ),
+            }
+            .into_kverror());
+        }
+        deduped.insert(trimmed.to_string());
+    }
+
+    let normalized: Vec<String> = deduped.into_iter().collect();
+    if normalized.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.rdma_device_names must not be empty".to_string(),
+        }
+        .into_kverror());
+    }
+
+    test_spec_config.rdma_device_names = Some(normalized);
+    Ok(())
+}
+
+fn validate_required_transfer_rpc_fast_path_ready_timeout(
+    test_spec_config: &TestSpecConfig,
+) -> KvResult<()> {
+    let Some(timeout_seconds) =
+        test_spec_config.require_transfer_rpc_fast_path_ready_timeout_seconds
+    else {
+        return Ok(());
+    };
+
+    if timeout_seconds == 0 {
+        return Err(ConfigError::InvalidClientConfig {
+            detail:
+                "test_spec_config.require_transfer_rpc_fast_path_ready_timeout_seconds must be > 0"
+                    .to_string(),
+        }
+        .into_kverror());
+    }
+    if test_spec_config.transport_mode != Some(TestSpecTransportMode::TransferWithRpc) {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.require_transfer_rpc_fast_path_ready_timeout_seconds requires test_spec_config.transport_mode=transfer_with_rpc".to_string(),
+        }
+        .into_kverror());
+    }
+    if !matches!(test_spec_config.protocol_type, Some(ProtocolType::Tcp))
+        && test_spec_config.rdma_device_names.is_none()
+    {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: "test_spec_config.require_transfer_rpc_fast_path_ready_timeout_seconds requires explicit test_spec_config.rdma_device_names".to_string(),
+        }
+        .into_kverror());
+    }
+
+    Ok(())
+}
+
+fn apply_test_spec_rdma_device_names_to_protocol(
+    mut protocol: ProtocolConfig,
+    normalized_rdma_device_names: Option<&[String]>,
+) -> ProtocolConfig {
+    if matches!(protocol.protocol_type, ProtocolType::Rdma)
+        && let Some(devices) = normalized_rdma_device_names
+    {
+        protocol.rdma_device_names = Some(devices.join(","));
+    }
+    protocol
+}
+
+fn resolve_protocol_config(
+    raw: Option<&NetworkConfigYaml>,
+    protocol_type: ProtocolType,
+    default_tcp_reactor_mode: TcpThreadReactorWaitMode,
+) -> KvResult<ProtocolConfig> {
+    let raw = raw.cloned().unwrap_or_default();
+    let rdma_device_names = match raw.rdma_device_names {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "network.rdma_device_names must be a non-empty string".to_string(),
+                }
+                .into_kverror());
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+    Ok(ProtocolConfig {
+        protocol_type,
+        rdma_device_names,
+        tcp_thread_reactor: raw.tcp_reactor_mode.unwrap_or(default_tcp_reactor_mode),
+    })
+}
+
+fn resolve_member_network_config(
+    raw: Option<&NetworkConfigYaml>,
+) -> KvResult<Option<NetworkConfig>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let Some(subnet_whitelist) = raw.subnet_whitelist.as_ref() else {
+        if raw.primary_ip_to_extended_ips.is_some() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "network.primary_ip_to_extended_ips requires network.subnet_whitelist"
+                    .to_string(),
+            }
+            .into_kverror());
+        }
+        return Ok(None);
+    };
+    Ok(Some(NetworkConfig {
+        subnet_whitelist: subnet_whitelist.clone(),
+        primary_ip_to_extended_ips: raw.primary_ip_to_extended_ips.clone(),
+    }))
+}
+
+fn validate_test_spec_optional_u8_range(
+    value: Option<u8>,
+    field_name: &str,
+    min: u8,
+    max: u8,
+) -> KvResult<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value < min || value > max {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field_name} must be in [{min}, {max}], got {value}"),
+        }
+        .into_kverror());
+    }
+    Ok(())
+}
+
+fn validate_test_spec_tcp_thread_tuning(test_spec_config: &TestSpecConfig) -> KvResult<()> {
+    validate_test_spec_optional_u8_range(
+        test_spec_config.tcp_thread_reactor_shard_count,
+        "test_spec_config.tcp_thread_reactor_shard_count",
+        TEST_SPEC_TCP_THREAD_REACTOR_SHARD_COUNT_MIN,
+        TEST_SPEC_TCP_THREAD_REACTOR_SHARD_COUNT_MAX,
+    )?;
+    validate_test_spec_optional_u8_range(
+        test_spec_config.tcp_thread_bulk_lane_count,
+        "test_spec_config.tcp_thread_bulk_lane_count",
+        TEST_SPEC_TCP_THREAD_BULK_LANE_COUNT_MIN,
+        TEST_SPEC_TCP_THREAD_BULK_LANE_COUNT_MAX,
+    )?;
+    validate_test_spec_optional_u8_range(
+        test_spec_config.tcp_thread_control_lane_count,
+        "test_spec_config.tcp_thread_control_lane_count",
+        TEST_SPEC_TCP_THREAD_CONTROL_LANE_COUNT_MIN,
+        TEST_SPEC_TCP_THREAD_CONTROL_LANE_COUNT_MAX,
+    )?;
+    if let Some(value) = test_spec_config.user_rpc_sync_handler_thread_count {
+        if value == 0 {
+            return Err(ConfigError::InvalidTestConfig {
+                detail: "test_spec_config.user_rpc_sync_handler_thread_count must be > 0"
+                    .to_string(),
+            }
+            .into_kverror());
+        }
+    }
+    Ok(())
+}
+
+fn normalize_and_validate_test_spec_config(
+    mut test_spec_config: TestSpecConfig,
+) -> KvResult<TestSpecConfig> {
+    let transport_mode_was_explicit = test_spec_config.transport_mode.is_some();
+    normalize_test_spec_rdma_device_names(&mut test_spec_config, transport_mode_was_explicit)?;
+    materialize_default_test_spec_transport_mode(&mut test_spec_config);
+    validate_required_transfer_rpc_fast_path_ready_timeout(&test_spec_config)?;
+    validate_test_spec_tcp_thread_tuning(&test_spec_config)?;
+    validate_test_spec_kv_ssd_backend(&test_spec_config)?;
+    Ok(test_spec_config)
+}
+
+fn transfer_engine_supports_rpc_fast_path(transfer_engine: TransferEngineType) -> bool {
+    matches!(transfer_engine, TransferEngineType::Closed)
+}
+
+fn cluster_scoped_shared_path(root: &str, cluster_name: &str) -> KvResult<String> {
+    let trimmed_root = root.trim();
+    if trimmed_root.is_empty() {
+        return Err(ConfigError::InvalidInstanceKey {
+            key: "shared path root cannot be empty".to_string(),
+        }
+        .into_kverror());
+    }
+    let trimmed_cluster = cluster_name.trim();
+    if trimmed_cluster.is_empty() {
+        return Err(ConfigError::InvalidClusterName {
+            name: cluster_name.to_string(),
+        }
+        .into_kverror());
+    }
+    let scoped: PathBuf = Path::new(trimmed_root).join(trimmed_cluster);
+    Ok(scoped.to_string_lossy().into_owned())
+}
+
+fn verify_non_empty_root_path(root: &str, field_name: &str) -> KvResult<String> {
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field_name} cannot be empty"),
+        }
+        .into_kverror());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn verify_non_empty_root_path_list(paths: &[String], field_name: &str) -> KvResult<Vec<String>> {
+    if paths.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field_name} must contain at least one path"),
+        }
+        .into_kverror());
+    }
+    let mut out = Vec::with_capacity(paths.len());
+    for (idx, root) in paths.iter().enumerate() {
+        out.push(verify_non_empty_root_path(
+            root,
+            &format!("{field_name}[{idx}]"),
+        )?);
+    }
+    Ok(out)
+}
+
+// Defaults for `monitoring.otlp_log_api`.
+//
+// Causal chain:
+// - User config should stay minimal: `otlp_endpoint` is enough to enable OTLP logs.
+// - We still want deterministic behavior when optional fields are omitted.
+// - A stable `table_name` default makes the embedded panel (/logs) work without extra query params,
+//   and avoids relying on GreptimeDB's internal default table naming.
+pub const DEFAULT_OTLP_LOG_DB_NAME: &str = "public";
+pub const DEFAULT_OTLP_LOG_TABLE_NAME: &str = "Bridging L2–L3_logs";
+pub const DEFAULT_OTLP_LOG_FLUSH_INTERVAL_MS: u64 = 2000;
+pub const DEFAULT_OTLP_LOG_MAX_BATCH_LINES: usize = 2000;
+pub const DEFAULT_OTLP_LOG_MAX_QUEUE_LINES: usize = 20000;
+
+fn verify_otlp_log_api(cfg: &mut GreptimeOtlpLogConfigYaml) -> KvResult<GreptimeOtlpLogConfig> {
+    let endpoint = cfg.otlp_endpoint.trim();
+    if endpoint.is_empty() || !endpoint.contains("://") {
+        return Err(ConfigError::InvalidGreptimeOtlpLogConfig {
+            detail: format!(
+                "invalid otlp_endpoint (expected http(s)://..): {}",
+                cfg.otlp_endpoint
+            ),
+        }
+        .into_kverror());
+    }
+
+    let db_name = match cfg
+        .db_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) => v.to_string(),
+        None => DEFAULT_OTLP_LOG_DB_NAME.to_string(),
+    };
+
+    let table_name = match cfg
+        .table_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        Some(v) => Some(v.to_string()),
+        None => Some(DEFAULT_OTLP_LOG_TABLE_NAME.to_string()),
+    };
+
+    let flush_interval_ms = match cfg.flush_interval_ms {
+        Some(v) if v > 0 => v,
+        Some(_) => {
+            return Err(ConfigError::InvalidGreptimeOtlpLogConfig {
+                detail: "flush_interval_ms must be > 0 when provided".to_string(),
+            }
+            .into_kverror());
+        }
+        None => DEFAULT_OTLP_LOG_FLUSH_INTERVAL_MS,
+    };
+
+    let max_batch_lines = match cfg.max_batch_lines {
+        Some(v) if v > 0 => v,
+        Some(_) => {
+            return Err(ConfigError::InvalidGreptimeOtlpLogConfig {
+                detail: "max_batch_lines must be > 0 when provided".to_string(),
+            }
+            .into_kverror());
+        }
+        None => DEFAULT_OTLP_LOG_MAX_BATCH_LINES,
+    };
+
+    let max_queue_lines = match cfg.max_queue_lines {
+        Some(v) if v > 0 => v,
+        Some(_) => {
+            return Err(ConfigError::InvalidGreptimeOtlpLogConfig {
+                detail: "max_queue_lines must be > 0 when provided".to_string(),
+            }
+            .into_kverror());
+        }
+        None => DEFAULT_OTLP_LOG_MAX_QUEUE_LINES,
+    };
+
+    Ok(GreptimeOtlpLogConfig {
+        otlp_endpoint: endpoint.to_string(),
+        db_name,
+        table_name,
+        flush_interval_ms,
+        max_batch_lines,
+        max_queue_lines,
+    })
+}
+
+/// Master节点YAML配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MasterConfigYaml {
+    pub instance_key: String,
+    pub cluster_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    pub etcd_endpoints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitoring: Option<MonitoringConfigYaml>, // monitoring config (prometheus base url, optional remote write, optional otlp_log_api)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfigYaml>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pprof_duration_seconds: Option<u64>,
+    pub log_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master_ui: Option<MasterUiConfigYaml>,
+    #[serde(default)]
+    pub test_spec_config: TestSpecConfig,
+}
+
+/// Master节点配置
+#[derive(Debug)]
+pub struct MasterConfig {
+    pub instance_key: String,
+    pub cluster_name: String,
+    pub port: Option<u16>,
+    pub etcd_endpoints: Vec<String>,
+    pub protocol: ProtocolConfig,
+    pub transfer_engine: TransferEngineType,
+    pub enable_transfer_rpc_fast_path: bool,
+    pub monitoring: Option<MonitoringConfig>, // monitoring config (prometheus base url, optional remote write, optional otlp_log_api)
+    pub network: Option<NetworkConfig>,
+    pub pprof_duration_seconds: Option<u64>,
+    pub log_dir: String,
+    pub master_ui: Option<MasterUiConfig>,
+    pub test_spec_config: TestSpecConfig,
+}
+
+/// Configuration for cluster pool size contribution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContributeToClusterPoolSizeYaml {
+    pub dram: SizeBytesYaml,                  // bytes
+    pub vram: HashMap<String, SizeBytesYaml>, // gpu_id -> bytes
+}
+
+/// Configuration for Bridging L2–L3 KV backend specifications
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bridging L2–L3KvSpecYaml {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etcd_addresses: Option<YamlNullable<Vec<String>>>,
+    pub cluster_name: String,
+    pub share_mem_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub large_file_paths: Option<LargeFilePathsYaml>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub large_limit_size: Option<YamlNullable<Vec<SizeBytesYaml>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p2p_listen_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redis_compat: Option<YamlNullable<RedisCompatConfigYaml>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_cluster: Option<YamlNullable<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct LargeFilePathsYaml(pub Vec<String>);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KvSsdStorageConfig {
+    pub large_limit_size: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedisCompatConfigYaml {
+    pub listen_addr: String,
+}
+
+/// Raw YAML configuration structure that matches the new design
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientConfigYaml {
+    pub instance_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<NetworkConfigYaml>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contribute_to_cluster_pool_size: Option<ContributeToClusterPoolSizeYaml>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pprof_duration_seconds: Option<u64>,
+    pub Bridging L2–L3kv_spec: Bridging L2–L3KvSpecYaml,
+    #[serde(default)]
+    pub test_spec_config: TestSpecConfig,
+}
+
+/// User-facing network configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkConfigYaml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subnet_whitelist: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_ip_to_extended_ips: Option<BTreeMap<String, Vec<String>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rdma_device_names: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_reactor_mode: Option<TcpThreadReactorWaitMode>,
+}
+
+/// Validated internal protocol configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolConfig {
+    pub protocol_type: ProtocolType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rdma_device_names: Option<String>,
+    #[serde(default)]
+    pub tcp_thread_reactor: TcpThreadReactorWaitMode,
+}
+
+/// Validated cluster pool size contribution
+#[derive(Debug, Clone)]
+pub struct ContributeToClusterPoolSize {
+    pub dram: u64,                  // bytes
+    pub vram: HashMap<String, u64>, // gpu_id -> bytes
+}
+
+/// Validated Bridging L2–L3 KV specifications
+#[derive(Debug, Clone)]
+pub struct Bridging L2–L3KvSpec {
+    pub etcd_addresses: Vec<String>,
+    pub cluster_name: String,
+    pub p2p_listen_port: Option<u16>,
+    pub transfer_engine: TransferEngineType,
+    pub enable_transfer_rpc_fast_path: bool,
+    pub sub_cluster: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct LargeFilePaths {
+    pub paths: Vec<String>,
+}
+
+impl LargeFilePaths {
+    fn require_configured_paths(&self) -> KvResult<()> {
+        if self.paths.is_empty() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "large_file_paths must contain at least one path".to_string(),
+            }
+            .into_kverror());
+        }
+        Ok(())
+    }
+
+    fn resolve_preferred_root_subdir(
+        &self,
+        relative_dir: &Path,
+        target_name: &str,
+    ) -> KvResult<PathBuf> {
+        self.require_configured_paths()?;
+        let mut errors = Vec::new();
+        for root in &self.paths {
+            let candidate = Path::new(root).join(relative_dir);
+            match fs::create_dir_all(&candidate) {
+                Ok(()) => return Ok(candidate),
+                Err(err) => errors.push(format!("{} ({})", candidate.display(), err)),
+            }
+        }
+        Err(ConfigError::InvalidClientConfig {
+            detail: format!(
+                "large_file_paths contains no usable root for {}; tried: {}",
+                target_name,
+                errors.join(", ")
+            ),
+        }
+        .into_kverror())
+    }
+
+    fn resolve_all_usable_root_subdirs(
+        &self,
+        relative_dir: &Path,
+        target_name: &str,
+    ) -> KvResult<Vec<PathBuf>> {
+        self.require_configured_paths()?;
+        let mut out = Vec::new();
+        let mut errors = Vec::new();
+        for root in &self.paths {
+            let candidate = Path::new(root).join(relative_dir);
+            match fs::create_dir_all(&candidate) {
+                Ok(()) => out.push(candidate),
+                Err(err) => errors.push(format!("{} ({})", candidate.display(), err)),
+            }
+        }
+        if out.is_empty() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "large_file_paths contains no usable root for {}; tried: {}",
+                    target_name,
+                    errors.join(", ")
+                ),
+            }
+            .into_kverror());
+        }
+        Ok(out)
+    }
+
+    pub fn kv_logs_dir(&self, cluster_name: &str) -> KvResult<PathBuf> {
+        let relative_dir = PathBuf::from(format!("{cluster_name}_cluster_kv_logs"));
+        self.resolve_preferred_root_subdir(&relative_dir, "kv logs")
+    }
+
+    pub fn third_party_logs_dir(&self, cluster_name: &str) -> KvResult<PathBuf> {
+        let relative_dir = PathBuf::from(format!("{cluster_name}_cluster_third_party_logs"));
+        self.resolve_preferred_root_subdir(&relative_dir, "third-party logs")
+    }
+
+    pub fn kv_profiles_dir(&self, cluster_name: &str) -> KvResult<PathBuf> {
+        let relative_dir = PathBuf::from(format!("{cluster_name}_cluster_kv_profiles"));
+        self.resolve_preferred_root_subdir(&relative_dir, "kv profiles")
+    }
+
+    pub fn side_transfer_runtime_dir(
+        &self,
+        cluster_name: &str,
+        instance_key: &str,
+    ) -> KvResult<PathBuf> {
+        let relative_dir = PathBuf::from(format!(
+            "{cluster_name}_cluster_kv_logs/side_transfer_runtime/{instance_key}"
+        ));
+        self.resolve_preferred_root_subdir(&relative_dir, "side-transfer runtime")
+    }
+
+    pub fn kv_disk_cache_base_dir(&self) -> KvResult<PathBuf> {
+        self.resolve_preferred_root_subdir(
+            Path::new("Bridging L2–L3_kv_disk_cache"),
+            "Bridging L2–L3 KV disk cache",
+        )
+    }
+
+    pub fn kv_ssd_storage_dirs(
+        &self,
+        cluster_name: &str,
+        instance_key: &str,
+    ) -> KvResult<Vec<PathBuf>> {
+        let relative_dir = PathBuf::from(format!(
+            "{cluster_name}_cluster_kv_ssd_storage/{}",
+            crate::kv_ssd_storage::safe_path_component(instance_key)
+        ));
+        self.resolve_all_usable_root_subdirs(&relative_dir, "kv ssd storage")
+    }
+
+    pub fn kv_ssd_storage_root_limits(
+        &self,
+        cluster_name: &str,
+        instance_key: &str,
+        large_limit_size: &[u64],
+    ) -> KvResult<Vec<(PathBuf, u64)>> {
+        self.require_configured_paths()?;
+        if large_limit_size.len() != self.paths.len() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "large_limit_size length must match large_file_paths length: large_limit_size={} large_file_paths={}",
+                    large_limit_size.len(),
+                    self.paths.len()
+                ),
+            }
+            .into_kverror());
+        }
+        let relative_dir = PathBuf::from(format!(
+            "{cluster_name}_cluster_kv_ssd_storage/{}",
+            crate::kv_ssd_storage::safe_path_component(instance_key)
+        ));
+        let mut out = Vec::new();
+        let mut errors = Vec::new();
+        for (root, limit_bytes) in self.paths.iter().zip(large_limit_size.iter().copied()) {
+            let candidate = Path::new(root).join(&relative_dir);
+            match fs::create_dir_all(&candidate) {
+                Ok(()) => out.push((candidate, limit_bytes)),
+                Err(err) => errors.push(format!("{} ({})", candidate.display(), err)),
+            }
+        }
+        if out.is_empty() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "large_file_paths contains no usable root for kv ssd storage; tried: {}",
+                    errors.join(", ")
+                ),
+            }
+            .into_kverror());
+        }
+        Ok(out)
+    }
+}
+
+/// KV client backend types supported by the system
+#[derive(Debug, Clone, PartialEq)]
+pub enum KvClientType {
+    Bridging L2–L3Kv,
+}
+
+/// Validated and processed client configuration
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub cluster_name: String,
+    pub etcd_addresses_raw: Vec<String>,
+    pub instance_key: String,
+    pub contribute_to_cluster_pool_size: ContributeToClusterPoolSize,
+    pub protocol: ProtocolConfig,
+    pub pprof_duration_seconds: Option<u64>,
+    pub redis_compat_listen_addr: Option<std::net::SocketAddr>,
+    pub Bridging L2–L3kv_spec: Bridging L2–L3KvSpec,
+    pub share_mem_path: String,           // Mandatory shared bundle path
+    pub large_file_paths: LargeFilePaths, // Mandatory large-file roots for logs and caches
+    pub ssd_storage: Option<KvSsdStorageConfig>,
+    pub test_spec_config: TestSpecConfig,
+}
+
+const CAPACITY_ALIGNMENT_BYTES: u64 = 16 * 1024 * 1024;
+
+fn parse_size_bytes(value: &SizeBytesYaml, field: &str) -> KvResult<u64> {
+    match value {
+        SizeBytesYaml::Bytes(bytes) => Ok(*bytes),
+        SizeBytesYaml::Text(text) => parse_size_bytes_text(text, field),
+    }
+}
+
+fn parse_size_bytes_text(raw: &str, field: &str) -> KvResult<u64> {
+    let input = raw.trim();
+    if input.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field} size must not be empty"),
+        }
+        .into_kverror());
+    }
+
+    let mut number_end = 0usize;
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    for (idx, ch) in input.char_indices() {
+        if ch.is_ascii_digit() {
+            saw_digit = true;
+            number_end = idx + ch.len_utf8();
+            continue;
+        }
+        if ch == '.' && !saw_dot {
+            saw_dot = true;
+            number_end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    let number = input[..number_end].trim();
+    let unit = input[number_end..].trim();
+    if !saw_digit || number == "." {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field} size must start with a number, got: {raw}"),
+        }
+        .into_kverror());
+    }
+    if unit.chars().any(|ch| !ch.is_ascii_alphabetic()) {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field} size unit must be alphabetic, got: {raw}"),
+        }
+        .into_kverror());
+    }
+    let multiplier = match unit.to_ascii_lowercase().as_str() {
+        "" | "b" | "byte" | "bytes" => 1u128,
+        "kb" | "kib" => 1024u128,
+        "mb" | "mib" => 1024u128.pow(2),
+        "gb" | "gib" => 1024u128.pow(3),
+        "tb" | "tib" => 1024u128.pow(4),
+        _ => {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "{field} size unit must be one of B, KB, MB, GB, TB, KiB, MiB, GiB, TiB; got: {raw}"
+                ),
+            }
+            .into_kverror());
+        }
+    };
+
+    let (whole, frac) = match number.split_once('.') {
+        Some((whole, frac)) => {
+            if frac.is_empty() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: format!("{field} size has empty fractional part: {raw}"),
+                }
+                .into_kverror());
+            }
+            (whole, frac)
+        }
+        None => (number, ""),
+    };
+    let digits = format!("{whole}{frac}");
+    let mut numerator = 0u128;
+    for ch in digits.chars() {
+        let digit = ch.to_digit(10).ok_or_else(|| {
+            ConfigError::InvalidClientConfig {
+                detail: format!("{field} size has invalid number: {raw}"),
+            }
+            .into_kverror()
+        })? as u128;
+        numerator = numerator
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(digit))
+            .ok_or_else(|| {
+                ConfigError::InvalidClientConfig {
+                    detail: format!("{field} size is too large: {raw}"),
+                }
+                .into_kverror()
+            })?;
+    }
+    let scale = (0..frac.len()).try_fold(1u128, |acc, _| {
+        acc.checked_mul(10).ok_or_else(|| {
+            ConfigError::InvalidClientConfig {
+                detail: format!("{field} size has too many decimal places: {raw}"),
+            }
+            .into_kverror()
+        })
+    })?;
+    let bytes_num = numerator.checked_mul(multiplier).ok_or_else(|| {
+        ConfigError::InvalidClientConfig {
+            detail: format!("{field} size is too large: {raw}"),
+        }
+        .into_kverror()
+    })?;
+    let bytes = bytes_num / scale;
+    if bytes > u64::MAX as u128 {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{field} size exceeds u64 bytes: {raw}"),
+        }
+        .into_kverror());
+    }
+    Ok(bytes as u64)
+}
+
+fn _validate_host_port_no_scheme(value: &str, field: &str) -> KvResult<()> {
+    let s = value.trim();
+    if s.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{} must be a non-empty string", field),
+        }
+        .into_kverror());
+    }
+
+    // Config contract (aligned with Python): etcd endpoints are raw host:port strings without scheme.
+    if s.contains("://") {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{} must be raw host:port (no scheme), got: {}", field, s),
+        }
+        .into_kverror());
+    }
+
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{} must match '{{str}}:{{int}}', got: {}", field, s),
+        }
+        .into_kverror());
+    }
+    let host = parts[0];
+    let port_s = parts[1];
+    if host.is_empty() || port_s.is_empty() {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{} must match '{{str}}:{{int}}', got: {}", field, s),
+        }
+        .into_kverror());
+    }
+    let port_u32: u32 = port_s.parse().map_err(|_| {
+        ConfigError::InvalidClientConfig {
+            detail: format!("{} port must be an integer, got: {}", field, s),
+        }
+        .into_kverror()
+    })?;
+    if port_u32 == 0 || port_u32 > (u16::MAX as u32) {
+        return Err(ConfigError::InvalidClientConfig {
+            detail: format!("{} port out of range (1..=65535), got: {}", field, s),
+        }
+        .into_kverror());
+    }
+    Ok(())
+}
+
+fn align_capacity_down(value: u64) -> u64 {
+    value / CAPACITY_ALIGNMENT_BYTES * CAPACITY_ALIGNMENT_BYTES
+}
+
+pub fn normalize_etcd_addresses(addresses: &[String]) -> KvResult<Vec<String>> {
+    // Etcd client requires URL endpoints with scheme; config uses raw host:port strings.
+    // This conversion is deterministic and part of the config contract.
+    let mut result = Vec::new();
+    for address in addresses {
+        _validate_host_port_no_scheme(address, "etcd address")?;
+        result.push(format!("http://{}", address.trim()));
+    }
+    Ok(result)
+}
+
+pub fn denormalize_etcd_endpoints(endpoints: &[String]) -> KvResult<Vec<String>> {
+    // Convert `http(s)://host:port` endpoints back to raw `host:port` strings.
+    //
+    // Causal chain:
+    // - Python KvClient exposes `get_etcd_config()` as raw host:port (no scheme).
+    // - Rust KV/RPC modules also use raw host:port for a consistent public API.
+    // - Internally, `etcd-client` requires scheme-prefixed endpoints; we keep the conversion
+    //   deterministic and reject any non-canonical forms (no fallback).
+    let mut result = Vec::new();
+    for endpoint in endpoints {
+        let s = endpoint.trim();
+        if s.is_empty() {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "etcd endpoint must be non-empty".to_string(),
+            }
+            .into_kverror());
+        }
+        let raw = if let Some(rest) = s.strip_prefix("http://") {
+            rest
+        } else if let Some(rest) = s.strip_prefix("https://") {
+            rest
+        } else {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "etcd endpoint must start with http:// or https://, got: {}",
+                    s
+                ),
+            }
+            .into_kverror());
+        };
+        if raw.contains('/') || raw.contains('?') || raw.contains('#') {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: format!(
+                    "etcd endpoint must be scheme + host:port without path/query/fragment, got: {}",
+                    s
+                ),
+            }
+            .into_kverror());
+        }
+        _validate_host_port_no_scheme(raw, "etcd endpoint")?;
+        result.push(raw.to_string());
+    }
+    Ok(result)
+}
+
+impl ClientConfigYaml {
+    /// Load configuration from a YAML file
+    pub fn from_file<P: AsRef<Path>>(path: P) -> KvResult<Self> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            ConfigError::FileReadError {
+                detail: e.to_string(),
+            }
+            .into_kverror()
+        })?;
+        let config: ClientConfigYaml = serde_yaml::from_str(&content).map_err(|e| {
+            ConfigError::YamlParseError {
+                // English note: serde_yaml errors usually do not include the original document; include it for debugging.
+                detail: format!("{}\n--- YAML BEGIN ---\n{}\n--- YAML END ---", e, content),
+            }
+            .into_kverror()
+        })?;
+        Ok(config)
+    }
+
+    /// Load configuration from a YAML string
+    pub fn from_str(yaml_str: &str) -> KvResult<Self> {
+        let config: ClientConfigYaml = serde_yaml::from_str(yaml_str).map_err(|e| {
+            ConfigError::YamlParseError {
+                // English note: serde_yaml errors usually do not include the original document; include it for debugging.
+                detail: format!("{}\n--- YAML BEGIN ---\n{}\n--- YAML END ---", e, yaml_str),
+            }
+            .into_kverror()
+        })?;
+        Ok(config)
+    }
+
+    /// Verify and validate the configuration, returning a processed Config
+    pub fn verify(mut self) -> KvResult<ClientConfig> {
+        // Validate instance_key
+        if self.instance_key.trim().is_empty() {
+            return Err(ConfigError::InvalidInstanceKey {
+                key: self.instance_key,
+            }
+            .into_kverror());
+        }
+
+        let pprof_duration_seconds = match self.pprof_duration_seconds {
+            Some(0) => {
+                return Err(ConfigError::InvalidPprofDurationSeconds { seconds: 0 }.into_kverror());
+            }
+            Some(v) => Some(v),
+            None => None,
+        };
+
+        let test_spec_config = normalize_and_validate_test_spec_config(self.test_spec_config)?;
+
+        // Role selection contract:
+        // - Missing contribute_to_cluster_pool_size means "zero-contribution" mode.
+        // - Explicit contribute_to_cluster_pool_size with all zeros also means "zero-contribution" mode.
+        // - Any partial-zero contribution is rejected to avoid ambiguous behavior.
+        let (is_external, contribute_to_cluster_pool_size) = match &self
+            .contribute_to_cluster_pool_size
+        {
+            None => (
+                true,
+                ContributeToClusterPoolSize {
+                    dram: 0,
+                    vram: HashMap::new(),
+                },
+            ),
+            Some(c) => {
+                let dram = align_capacity_down(parse_size_bytes(
+                    &c.dram,
+                    "contribute_to_cluster_pool_size.dram",
+                )?);
+                let mut vram = HashMap::new();
+                for (gpu_id, size) in c.vram.iter() {
+                    vram.insert(
+                        gpu_id.clone(),
+                        align_capacity_down(parse_size_bytes(
+                            size,
+                            &format!("contribute_to_cluster_pool_size.vram.{gpu_id}"),
+                        )?),
+                    );
+                }
+                let vram_is_zero = vram.values().all(|&v| v == 0);
+                if dram == 0 && !vram_is_zero {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail: "contribute_to_cluster_pool_size is partially zero: dram=0 but vram has non-zero values".to_string(),
+                    }
+                    .into_kverror());
+                }
+                let is_zero = dram == 0 && vram_is_zero;
+
+                (is_zero, ContributeToClusterPoolSize { dram, vram })
+            }
+        };
+
+        if !is_external && contribute_to_cluster_pool_size.dram == 0 {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "owner mode requires non-zero contribute_to_cluster_pool_size.dram"
+                    .to_string(),
+            }
+            .into_kverror());
+        }
+
+        let is_side_transfer_worker = matches!(
+            test_spec_config.side_transfer_role,
+            Some(SideTransferRole::Worker)
+        );
+
+        if is_side_transfer_worker && !is_external {
+            return Err(ConfigError::InvalidClientConfig {
+                detail:
+                    "test_spec_config.side_transfer_role=worker requires zero-contribution mode"
+                        .to_string(),
+            }
+            .into_kverror());
+        }
+
+        if is_external
+            && !is_side_transfer_worker
+            && test_spec_config.side_transfer_worker_count > 0
+        {
+            return Err(ConfigError::InvalidClientConfig {
+                detail:
+                    "test_spec_config.side_transfer_worker_count is only valid on owner configs"
+                        .to_string(),
+            }
+            .into_kverror());
+        }
+
+        // External (zero-contribution) mode forbids additional owner-derived knobs to keep the schema minimal.
+        if is_external {
+            if self.Bridging L2–L3kv_spec.redis_compat.is_some() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.redis_compat is forbidden in zero-contribution mode"
+                        .to_string(),
+                }
+                .into_kverror());
+            }
+            if self.Bridging L2–L3kv_spec.sub_cluster.is_some() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.sub_cluster is forbidden in zero-contribution mode (it is inherited from owner shared.json)".to_string(),
+                }
+                .into_kverror());
+            }
+            if self.Bridging L2–L3kv_spec.etcd_addresses.is_some() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.etcd_addresses is forbidden in zero-contribution mode (it is bootstrapped from owner shared.json)".to_string(),
+                }
+                .into_kverror());
+            }
+            if self.Bridging L2–L3kv_spec.large_file_paths.is_some() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.large_file_paths is forbidden in zero-contribution mode (it is inherited from owner shared.json)".to_string(),
+                }
+                .into_kverror());
+            }
+            if self.Bridging L2–L3kv_spec.large_limit_size.is_some() {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.large_limit_size is forbidden in zero-contribution mode"
+                        .to_string(),
+                }
+                .into_kverror());
+            }
+        }
+
+        // Keep the existing protocol default unless a test override is explicit.
+        // Internal side-transfer workers derive TCP from their role.
+        if let Some(network) = self.network.as_ref()
+            && (network.subnet_whitelist.is_some() || network.primary_ip_to_extended_ips.is_some())
+        {
+            return Err(ConfigError::InvalidClientConfig {
+                detail: "network.subnet_whitelist and network.primary_ip_to_extended_ips are only valid in master config".to_string(),
+            }
+            .into_kverror());
+        }
+        let protocol = apply_test_spec_rdma_device_names_to_protocol(
+            resolve_protocol_config(
+                self.network.as_ref(),
+                if is_side_transfer_worker {
+                    ProtocolType::Tcp
+                } else {
+                    test_spec_config
+                        .protocol_type
+                        .unwrap_or(DEFAULT_PROTOCOL_TYPE)
+                },
+                if is_external && !is_side_transfer_worker {
+                    DEFAULT_EXTERNAL_TCP_REACTOR_WAIT_MODE
+                } else {
+                    DEFAULT_SERVER_TCP_REACTOR_WAIT_MODE
+                },
+            )?,
+            test_spec_config.rdma_device_names.as_deref(),
+        );
+
+        // Preserve raw etcd_addresses for shared.json (external bootstrap expects raw strings).
+        let (etcd_addresses_raw, etcd_endpoints) = if is_external {
+            (Vec::new(), Vec::new())
+        } else {
+            let Some(etcd_raw) = std::mem::take(&mut self.Bridging L2–L3kv_spec.etcd_addresses) else {
+                return Err(ConfigError::EmptyEtcdAddresses {}.into_kverror());
+            };
+            let etcd_raw = match etcd_raw {
+                YamlNullable::Null => {
+                    return Err(ConfigError::EmptyEtcdAddresses {}.into_kverror());
+                }
+                YamlNullable::Value(v) => v,
+            };
+            if etcd_raw.is_empty() {
+                return Err(ConfigError::EmptyEtcdAddresses {}.into_kverror());
+            }
+            for address in &etcd_raw {
+                _validate_host_port_no_scheme(address, "Bridging L2–L3kv_spec.etcd_addresses[]")?;
+            }
+            let normalized = normalize_etcd_addresses(&etcd_raw)?;
+            (etcd_raw, normalized)
+        };
+
+        // for address in &mut self.unifykv_spec.etcd_addresses {
+        //     if address.trim().is_empty() {
+        //         return Err(ConfigError::InvalidEtcdAddress(address.clone()).into());
+        //     }
+        //     if !address.contains("://") {
+        //         warn!(
+        //             "etcd address {} missing protocol prefix, automatically adding http:// prefix",
+        //             address
+        //         );
+        //         *address = format!("http://{}", address);
+        //     }
+        // }
+
+        // Validate cluster_name
+        if self.Bridging L2–L3kv_spec.cluster_name.trim().is_empty() {
+            return Err(ConfigError::InvalidClusterName {
+                name: self.Bridging L2–L3kv_spec.cluster_name,
+            }
+            .into_kverror());
+        }
+
+        if let Some(raw) = self.Bridging L2–L3kv_spec.sub_cluster.as_ref() {
+            if let YamlNullable::Value(s) = raw {
+                if s.trim().is_empty() {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail:
+                            "Bridging L2–L3kv_spec.sub_cluster must be a non-empty string when provided"
+                                .to_string(),
+                    }
+                    .into_kverror());
+                }
+                if s != s.trim() {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail:
+                            "Bridging L2–L3kv_spec.sub_cluster must not have leading/trailing whitespace"
+                                .to_string(),
+                    }
+                    .into_kverror());
+                }
+            }
+        }
+
+        let transfer_engine = if is_side_transfer_worker {
+            TransferEngineType::P2p
+        } else {
+            TransferEngineType::Closed
+        };
+        let enable_transfer_rpc_fast_path = if is_side_transfer_worker {
+            false
+        } else {
+            resolve_enable_transfer_rpc_fast_path(
+                transfer_engine_supports_rpc_fast_path(transfer_engine),
+                Some(&test_spec_config),
+            )
+        };
+
+        let sub_cluster = if is_external {
+            None
+        } else {
+            match std::mem::take(&mut self.Bridging L2–L3kv_spec.sub_cluster) {
+                None | Some(YamlNullable::Null) => {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail: "Bridging L2–L3kv_spec.sub_cluster is required for owner mode".to_string(),
+                    }
+                    .into_kverror());
+                }
+                Some(YamlNullable::Value(s)) => Some(s),
+            }
+        };
+
+        let Bridging L2–L3kv_spec = Bridging L2–L3KvSpec {
+            etcd_addresses: etcd_endpoints,
+            cluster_name: self.Bridging L2–L3kv_spec.cluster_name,
+            p2p_listen_port: self.Bridging L2–L3kv_spec.p2p_listen_port,
+            transfer_engine,
+            enable_transfer_rpc_fast_path,
+            sub_cluster,
+        };
+
+        if let Some(p) = self.Bridging L2–L3kv_spec.p2p_listen_port {
+            if p == 0 {
+                return Err(ConfigError::InvalidPort { port: p }.into_kverror());
+            }
+        }
+
+        if let Some(p) = test_spec_config.side_transfer_worker_p2p_port_base {
+            if p == 0 {
+                return Err(ConfigError::InvalidPort { port: p }.into_kverror());
+            }
+        }
+
+        // Validate share_mem_path (mandatory and non-empty)
+        if self.Bridging L2–L3kv_spec.share_mem_path.trim().is_empty() {
+            return Err(ConfigError::InvalidInstanceKey {
+                key: "share_mem_path cannot be empty".to_string(),
+            }
+            .into_kverror());
+        }
+        // Owner mode always needs explicit ordered large-file roots.
+        // The listen port stays optional at this contract layer: deterministic
+        // callers may pin it, while shared testbed owners can leave it unset
+        // and let the runtime bind a free port.
+        let large_file_paths = if is_external {
+            LargeFilePaths { paths: Vec::new() }
+        } else {
+            let Some(large_file_paths_yaml) = self.Bridging L2–L3kv_spec.large_file_paths.as_ref() else {
+                return Err(ConfigError::InvalidClientConfig {
+                    detail: "Bridging L2–L3kv_spec.large_file_paths is required for owner mode".to_string(),
+                }
+                .into_kverror());
+            };
+            LargeFilePaths {
+                paths: verify_non_empty_root_path_list(
+                    &large_file_paths_yaml.0,
+                    "large_file_paths",
+                )?,
+            }
+        };
+
+        let share_mem_path = cluster_scoped_shared_path(
+            &self.Bridging L2–L3kv_spec.share_mem_path,
+            &Bridging L2–L3kv_spec.cluster_name,
+        )?;
+        let redis_compat_listen_addr = match self.Bridging L2–L3kv_spec.redis_compat.as_ref() {
+            None | Some(YamlNullable::Null) => None,
+            Some(YamlNullable::Value(rc)) => {
+                let s = rc.listen_addr.trim();
+                if s.is_empty() {
+                    return Err(ConfigError::InvalidRedisCompatListenAddr {
+                        addr: rc.listen_addr.clone(),
+                    }
+                    .into_kverror());
+                }
+                let addr = std::net::SocketAddr::from_str(s).map_err(|_| {
+                    ConfigError::InvalidRedisCompatListenAddr {
+                        addr: rc.listen_addr.clone(),
+                    }
+                    .into_kverror()
+                })?;
+                Some(addr)
+            }
+        };
+
+        let ssd_storage = if is_external {
+            None
+        } else {
+            match std::mem::take(&mut self.Bridging L2–L3kv_spec.large_limit_size) {
+                None | Some(YamlNullable::Null) => None,
+                Some(YamlNullable::Value(raw_large_limit_size)) => {
+                    let mut large_limit_size = Vec::with_capacity(raw_large_limit_size.len());
+                    for (idx, limit) in raw_large_limit_size.iter().enumerate() {
+                        large_limit_size.push(parse_size_bytes(
+                            limit,
+                            &format!("Bridging L2–L3kv_spec.large_limit_size[{idx}]"),
+                        )?);
+                    }
+                    if large_limit_size.len() != large_file_paths.paths.len() {
+                        return Err(ConfigError::InvalidClientConfig {
+                            detail: format!(
+                                "Bridging L2–L3kv_spec.large_limit_size length must match Bridging L2–L3kv_spec.large_file_paths length: large_limit_size={} large_file_paths={}",
+                                large_limit_size.len(),
+                                large_file_paths.paths.len()
+                            ),
+                        }
+                        .into_kverror());
+                    }
+                    for (idx, limit) in large_limit_size.iter().enumerate() {
+                        if *limit < crate::kv_ssd_storage::SSD_ALIGNMENT as u64 {
+                            return Err(ConfigError::InvalidClientConfig {
+                                detail: format!(
+                                    "Bridging L2–L3kv_spec.large_limit_size[{idx}] must be >= {}",
+                                    crate::kv_ssd_storage::SSD_ALIGNMENT
+                                ),
+                            }
+                            .into_kverror());
+                        }
+                    }
+                    Some(KvSsdStorageConfig { large_limit_size })
+                }
+            }
+        };
+
+        Ok(ClientConfig {
+            cluster_name: Bridging L2–L3kv_spec.cluster_name.clone(),
+            etcd_addresses_raw,
+            instance_key: self.instance_key,
+            contribute_to_cluster_pool_size,
+            protocol,
+            pprof_duration_seconds,
+            redis_compat_listen_addr,
+            Bridging L2–L3kv_spec,
+            share_mem_path,
+            large_file_paths,
+            ssd_storage,
+            test_spec_config,
+        })
+    }
+}
+
+impl MasterConfigYaml {
+    /// Load configuration from a YAML file
+    pub fn from_file<P: AsRef<Path>>(path: P) -> KvResult<Self> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            ConfigError::FileReadError {
+                detail: e.to_string(),
+            }
+            .into_kverror()
+        })?;
+        let config: MasterConfigYaml = serde_yaml::from_str(&content).map_err(|e| {
+            ConfigError::YamlParseError {
+                // English note: serde_yaml errors usually do not include the original document; include it for debugging.
+                detail: format!("{}\n--- YAML BEGIN ---\n{}\n--- YAML END ---", e, content),
+            }
+            .into_kverror()
+        })?;
+        Ok(config)
+    }
+
+    /// Load configuration from a YAML string
+    pub fn from_str(yaml_str: &str) -> KvResult<Self> {
+        let config: MasterConfigYaml = serde_yaml::from_str(yaml_str).map_err(|e| {
+            ConfigError::YamlParseError {
+                // English note: serde_yaml errors usually do not include the original document; include it for debugging.
+                detail: format!("{}\n--- YAML BEGIN ---\n{}\n--- YAML END ---", e, yaml_str),
+            }
+            .into_kverror()
+        })?;
+        Ok(config)
+    }
+
+    /// Verify and validate the configuration, returning a processed MasterConfig
+    pub fn verify(mut self) -> KvResult<MasterConfig> {
+        // Validate instance_name
+        if self.instance_key.trim().is_empty() {
+            return Err(ConfigError::InvalidInstanceKey {
+                key: self.instance_key,
+            }
+            .into_kverror());
+        }
+
+        // Validate cluster_name
+        if self.cluster_name.trim().is_empty() {
+            return Err(ConfigError::InvalidClusterName {
+                name: self.cluster_name,
+            }
+            .into_kverror());
+        }
+
+        if let Some(p) = self.port {
+            if p == 0 {
+                return Err(ConfigError::InvalidPort { port: p }.into_kverror());
+            }
+        }
+
+        // Validate etcd_endpoints
+        if self.etcd_endpoints.is_empty() {
+            return Err(ConfigError::EmptyEtcdEndpoints {}.into_kverror());
+        }
+        for endpoint in &self.etcd_endpoints {
+            _validate_host_port_no_scheme(endpoint, "master.etcd_endpoints[]")?;
+        }
+        self.etcd_endpoints = normalize_etcd_addresses(&self.etcd_endpoints)?;
+
+        let monitoring = match self.monitoring.as_mut() {
+            Some(monitoring) => {
+                let prom_base = monitoring.prometheus_base_url.trim();
+                if prom_base.is_empty() || !prom_base.contains("://") {
+                    return Err(ConfigError::InvalidPrometheusBaseUrl {
+                        detail: monitoring.prometheus_base_url.clone(),
+                    }
+                    .into_kverror());
+                }
+
+                let prom_remote_write_url = match monitoring.prom_remote_write_url.as_mut() {
+                    Some(urls) => {
+                        if urls.is_empty() {
+                            return Err(ConfigError::InvalidPromRemoteWriteUrl {
+                                detail: "empty list".to_string(),
+                            }
+                            .into_kverror());
+                        }
+                        let mut out: Vec<String> = Vec::with_capacity(urls.len());
+                        for url in urls.iter_mut() {
+                            let trimmed = url.trim();
+                            if trimmed.is_empty() || !trimmed.contains("://") {
+                                return Err(ConfigError::InvalidPromRemoteWriteUrl {
+                                    detail: trimmed.to_string(),
+                                }
+                                .into_kverror());
+                            }
+                            out.push(trimmed.to_string());
+                        }
+                        Some(out)
+                    }
+                    None => None,
+                };
+
+                let otlp_log_api = match monitoring.otlp_log_api.as_mut() {
+                    Some(cfg) => Some(verify_otlp_log_api(cfg)?),
+                    None => None,
+                };
+
+                MonitoringConfig {
+                    prometheus_base_url: prom_base.to_string(),
+                    prom_remote_write_url,
+                    otlp_log_api,
+                }
+            }
+            None => return Err(ConfigError::MissingMonitoringConfig {}.into_kverror()),
+        };
+
+        let mut member_network = resolve_member_network_config(self.network.as_ref())?;
+        let network = match member_network.as_mut() {
+            Some(cfg) => {
+                for cidr in cfg.subnet_whitelist.iter_mut() {
+                    let trimmed = cidr.trim();
+                    if trimmed.is_empty() {
+                        return Err(ConfigError::InvalidSubnetWhitelistCidr {
+                            cidr: cidr.clone(),
+                            detail: "empty cidr".to_string(),
+                        }
+                        .into_kverror());
+                    }
+                    if let Err(detail) = validate_ip_cidr(trimmed) {
+                        return Err(ConfigError::InvalidSubnetWhitelistCidr {
+                            cidr: trimmed.to_string(),
+                            detail,
+                        }
+                        .into_kverror());
+                    }
+                    if trimmed != cidr {
+                        *cidr = trimmed.to_string();
+                    }
+                }
+
+                // Keep this mapping strict: keys are locally-discovered IP strings; values are extra reachable IPs.
+                if let Some(mapping) = cfg.primary_ip_to_extended_ips.as_mut() {
+                    let mut normalized: BTreeMap<String, Vec<String>> = BTreeMap::new();
+                    for (primary_ip_raw, extended_ips_raw) in mapping.iter() {
+                        let primary_ip_trimmed = primary_ip_raw.trim();
+                        if primary_ip_trimmed.is_empty() {
+                            return Err(ConfigError::InvalidPrimaryIpToExtendedIpsPrimaryIp {
+                                ip: primary_ip_raw.clone(),
+                                detail: "empty primary ip".to_string(),
+                            }
+                            .into_kverror());
+                        }
+                        if primary_ip_trimmed != primary_ip_raw.as_str() {
+                            return Err(ConfigError::InvalidPrimaryIpToExtendedIpsPrimaryIp {
+                                ip: primary_ip_raw.clone(),
+                                detail: "primary ip has leading/trailing whitespace".to_string(),
+                            }
+                            .into_kverror());
+                        }
+                        let primary_ip = match IpAddr::from_str(primary_ip_trimmed) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return Err(ConfigError::InvalidPrimaryIpToExtendedIpsPrimaryIp {
+                                    ip: primary_ip_trimmed.to_string(),
+                                    detail: e.to_string(),
+                                }
+                                .into_kverror());
+                            }
+                        };
+                        let primary_ip_norm = primary_ip.to_string();
+                        if normalized.contains_key(&primary_ip_norm) {
+                            return Err(ConfigError::InvalidPrimaryIpToExtendedIpsPrimaryIp {
+                                ip: primary_ip_norm,
+                                detail: "duplicate primary ip after normalization".to_string(),
+                            }
+                            .into_kverror());
+                        }
+
+                        let mut extended_norm: Vec<String> =
+                            Vec::with_capacity(extended_ips_raw.len());
+                        for ip_raw in extended_ips_raw.iter() {
+                            let ip_trimmed = ip_raw.trim();
+                            if ip_trimmed.is_empty() {
+                                return Err(ConfigError::InvalidPrimaryIpToExtendedIpsExtendedIp {
+                                    primary_ip: primary_ip_norm.clone(),
+                                    ip: ip_raw.clone(),
+                                    detail: "empty extended ip".to_string(),
+                                }
+                                .into_kverror());
+                            }
+                            if ip_trimmed != ip_raw.as_str() {
+                                return Err(ConfigError::InvalidPrimaryIpToExtendedIpsExtendedIp {
+                                    primary_ip: primary_ip_norm.clone(),
+                                    ip: ip_raw.clone(),
+                                    detail: "extended ip has leading/trailing whitespace"
+                                        .to_string(),
+                                }
+                                .into_kverror());
+                            }
+                            let ip = match IpAddr::from_str(ip_trimmed) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return Err(
+                                        ConfigError::InvalidPrimaryIpToExtendedIpsExtendedIp {
+                                            primary_ip: primary_ip_norm.clone(),
+                                            ip: ip_trimmed.to_string(),
+                                            detail: e.to_string(),
+                                        }
+                                        .into_kverror(),
+                                    );
+                                }
+                            };
+                            let ip_norm = ip.to_string();
+                            if !extended_norm.contains(&ip_norm) {
+                                extended_norm.push(ip_norm);
+                            }
+                        }
+                        if extended_norm.is_empty() {
+                            return Err(ConfigError::InvalidPrimaryIpToExtendedIpsExtendedIp {
+                                primary_ip: primary_ip_norm.clone(),
+                                ip: "".to_string(),
+                                detail: "empty extended ip list".to_string(),
+                            }
+                            .into_kverror());
+                        }
+
+                        normalized.insert(primary_ip_norm, extended_norm);
+                    }
+                    *mapping = normalized;
+                }
+
+                Some(cfg.clone())
+            }
+            None => None,
+        };
+        // Validate log directory
+        if self.log_dir.trim().is_empty() {
+            return Err(ConfigError::InvalidLogDir {
+                dir: self.log_dir.clone(),
+            }
+            .into_kverror());
+        }
+
+        let pprof_duration_seconds = match self.pprof_duration_seconds {
+            Some(0) => {
+                return Err(ConfigError::InvalidPprofDurationSeconds { seconds: 0 }.into_kverror());
+            }
+            Some(v) => Some(v),
+            None => None,
+        };
+
+        let master_ui = match self.master_ui.as_mut() {
+            Some(cfg) => {
+                let listen_addr = cfg.http_listen_addr.trim();
+                if listen_addr.is_empty() {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail: "master_ui.http_listen_addr must be a non-empty string".to_string(),
+                    }
+                    .into_kverror());
+                }
+                if listen_addr != cfg.http_listen_addr {
+                    return Err(ConfigError::InvalidClientConfig {
+                        detail:
+                            "master_ui.http_listen_addr must not have leading/trailing whitespace"
+                                .to_string(),
+                    }
+                    .into_kverror());
+                }
+                Some(MasterUiConfig {
+                    http_listen_addr: listen_addr.to_string(),
+                })
+            }
+            None => None,
+        };
+
+        let test_spec_config = normalize_and_validate_test_spec_config(self.test_spec_config)?;
+        let protocol = apply_test_spec_rdma_device_names_to_protocol(
+            resolve_protocol_config(
+                self.network.as_ref(),
+                test_spec_config
+                    .protocol_type
+                    .unwrap_or(DEFAULT_PROTOCOL_TYPE),
+                DEFAULT_SERVER_TCP_REACTOR_WAIT_MODE,
+            )?,
+            test_spec_config.rdma_device_names.as_deref(),
+        );
+        let transfer_engine = TransferEngineType::Closed;
+
+        Ok(MasterConfig {
+            instance_key: self.instance_key,
+            cluster_name: self.cluster_name,
+            port: self.port,
+            etcd_endpoints: self.etcd_endpoints,
+            protocol,
+            transfer_engine,
+            enable_transfer_rpc_fast_path: resolve_enable_transfer_rpc_fast_path(
+                transfer_engine_supports_rpc_fast_path(transfer_engine),
+                Some(&test_spec_config),
+            ),
+            pprof_duration_seconds,
+            monitoring: Some(monitoring),
+            network,
+            log_dir: self.log_dir,
+            master_ui,
+            test_spec_config,
+        })
+    }
+}
+
+// ExternalClientConfig and ExternalClientConfigYaml are removed.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn new_test_dir(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("{}_{}", prefix, Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn cluster_scoped_shared_path_appends_cluster_name() {
+        let scoped = cluster_scoped_shared_path("/tmp/Bridging L2–L3_root", "test_cluster").unwrap();
+        assert_eq!(scoped, "/tmp/Bridging L2–L3_root/test_cluster");
+    }
+
+    #[test]
+    fn client_test_spec_config_transfer_only_disables_rpc_fast_path() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+network:
+  tcp_reactor_mode: busy_poll
+test_spec_config:
+  disable_observability: true
+  enable_iceoryx_logs: true
+  iceoryx_external_busy_poll: true
+  iceoryx_owner_client_busy_poll: false
+  transport_mode: transfer_only
+  rdma_device_names: ["mlx5_0"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.protocol.protocol_type, ProtocolType::Rdma);
+        assert!(verified.test_spec_config.disable_observability);
+        assert!(verified.test_spec_config.enable_iceoryx_logs);
+        assert!(verified.test_spec_config.iceoryx_external_busy_poll);
+        assert!(!verified.test_spec_config.iceoryx_owner_client_busy_poll);
+        assert_eq!(
+            verified.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::BusyPoll
+        );
+        assert_eq!(verified.share_mem_path, "/tmp/test_owner/test_cluster");
+        assert_eq!(
+            verified.test_spec_config.transport_mode,
+            Some(TestSpecTransportMode::TransferOnly)
+        );
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+        assert!(!verified.Bridging L2–L3kv_spec.enable_transfer_rpc_fast_path);
+    }
+
+    #[test]
+    fn client_test_spec_protocol_type_controls_tcp_and_rdma() {
+        let tcp = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner_tcp
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner_tcp
+  large_file_paths: [/tmp/test_owner_tcp_large]
+  sub_cluster: rack-a
+test_spec_config:
+  protocol_type: tcp
+  transport_mode: transfer_with_rpc
+  require_transfer_rpc_fast_path_ready_timeout_seconds: 30
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(tcp.protocol.protocol_type, ProtocolType::Tcp);
+        assert_eq!(tcp.protocol.rdma_device_names, None);
+        assert_eq!(
+            tcp.Bridging L2–L3kv_spec.transfer_engine,
+            TransferEngineType::Closed
+        );
+
+        let rdma = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner_rdma
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner_rdma
+  large_file_paths: [/tmp/test_owner_rdma_large]
+  sub_cluster: rack-a
+test_spec_config:
+  protocol_type: rdma
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(rdma.protocol.protocol_type, ProtocolType::Rdma);
+    }
+
+    #[test]
+    fn client_test_spec_tcp_protocol_rejects_rdma_devices() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  protocol_type: tcp
+  rdma_device_names: ["mlx5_0"]
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        assert!(format!("{err}").contains(
+            "test_spec_config.rdma_device_names requires test_spec_config.protocol_type=rdma"
+        ));
+    }
+
+    #[test]
+    fn client_test_spec_config_defaults_transport_mode_to_transfer_with_rpc() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+network:
+  rdma_device_names: mlx5_0
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.transport_mode,
+            Some(TestSpecTransportMode::TransferWithRpc)
+        );
+        assert_eq!(verified.test_spec_config.protocol_type, None);
+        assert_eq!(verified.protocol.protocol_type, DEFAULT_PROTOCOL_TYPE);
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+        assert_eq!(
+            verified.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::BusyPoll
+        );
+        assert!(verified.Bridging L2–L3kv_spec.enable_transfer_rpc_fast_path);
+    }
+
+    #[test]
+    fn client_network_rdma_device_names_are_trimmed_and_must_be_non_empty() {
+        let verified = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+network:
+  rdma_device_names: "  mlx5_0  "
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+        assert_eq!(
+            verified.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::EventDriven
+        );
+
+        let invalid = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+network:
+  rdma_device_names: "   "
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap();
+        let err = invalid.verify().unwrap_err();
+        assert!(format!("{err}").contains("network.rdma_device_names must be a non-empty string"));
+    }
+
+    #[test]
+    fn client_config_applies_role_specific_tcp_reactor_defaults() {
+        let external = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            external.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::EventDriven
+        );
+
+        let owner = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            owner.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::BusyPoll
+        );
+
+        let explicit_external_busy_poll = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+network:
+  tcp_reactor_mode: busy_poll
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            explicit_external_busy_poll.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::BusyPoll
+        );
+    }
+
+    #[test]
+    fn client_config_rejects_removed_event_mode() {
+        let err = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+network:
+  event_mode: event_driven
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("unknown field `event_mode`"));
+    }
+
+    #[test]
+    fn client_config_zero_contribution_allows_owner_bootstrapped_large_file_paths() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.large_file_paths.paths, Vec::<String>::new());
+        assert_eq!(verified.Bridging L2–L3kv_spec.etcd_addresses, Vec::<String>::new());
+        assert_eq!(verified.Bridging L2–L3kv_spec.sub_cluster, None);
+    }
+
+    #[test]
+    fn client_config_zero_contribution_rejects_large_file_paths_in_yaml() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+  large_file_paths: [/tmp/test_external_large]
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        let text = format!("{err}");
+        assert!(
+            text.contains("Bridging L2–L3kv_spec.large_file_paths is forbidden in zero-contribution mode")
+        );
+    }
+
+    #[test]
+    fn client_config_owner_accepts_large_limit_size() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [1048576]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified
+                .ssd_storage
+                .as_ref()
+                .map(|cfg| cfg.large_limit_size.as_slice()),
+            Some([1048576].as_slice())
+        );
+        assert_eq!(
+            verified.test_spec_config.kv_ssd_uring_mode,
+            KvSsdUringMode::SingleBuffer
+        );
+        assert_eq!(
+            verified.test_spec_config.kv_ssd_storage_backend,
+            KvSsdStorageBackend::Native
+        );
+    }
+
+    #[test]
+    fn client_config_accepts_size_strings() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 1.1GB
+  vram:
+    "0": 0.5GB
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [512.9B]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.contribute_to_cluster_pool_size.dram,
+            70 * CAPACITY_ALIGNMENT_BYTES
+        );
+        assert_eq!(
+            verified
+                .contribute_to_cluster_pool_size
+                .vram
+                .get("0")
+                .copied(),
+            Some(512 * 1024 * 1024)
+        );
+        assert_eq!(
+            verified
+                .ssd_storage
+                .as_ref()
+                .map(|cfg| cfg.large_limit_size.as_slice()),
+            Some([512].as_slice())
+        );
+    }
+
+    #[test]
+    fn size_string_truncates_fractional_bytes() {
+        assert_eq!(parse_size_bytes_text("0.9B", "test_size").unwrap(), 0);
+    }
+
+    #[test]
+    fn client_test_spec_config_accepts_kv_ssd_iovec_ablation_mode() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [1048576]
+  sub_cluster: rack-a
+test_spec_config:
+  kv_ssd_uring_mode: iovec
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.kv_ssd_uring_mode,
+            KvSsdUringMode::Iovec
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_accepts_foyer_kv_ssd_backend() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [134217728]
+  sub_cluster: rack-a
+test_spec_config:
+  kv_ssd_storage_backend: foyer
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.kv_ssd_storage_backend,
+            KvSsdStorageBackend::Foyer
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_rejects_foyer_with_iovec_mode() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [134217728]
+  sub_cluster: rack-a
+test_spec_config:
+  kv_ssd_storage_backend: foyer
+  kv_ssd_uring_mode: iovec
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        assert!(format!("{err}").contains("kv_ssd_uring_mode is only valid"));
+    }
+
+    #[test]
+    fn client_config_owner_rejects_large_limit_size_length_mismatch() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large_a, /tmp/test_owner_large_b]
+  large_limit_size: [1048576]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        let text = format!("{err}");
+        assert!(
+            text.contains("Bridging L2–L3kv_spec.large_limit_size length must match Bridging L2–L3kv_spec.large_file_paths length"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn client_config_owner_rejects_too_small_large_limit_size() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  large_limit_size: [1]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        let text = format!("{err}");
+        assert!(
+            text.contains("Bridging L2–L3kv_spec.large_limit_size[0] must be >= 512"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn client_config_zero_contribution_rejects_large_limit_size() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_external
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_external
+  large_limit_size: [1048576]
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        let text = format!("{err}");
+        assert!(
+            text.contains("Bridging L2–L3kv_spec.large_limit_size is forbidden in zero-contribution mode")
+        );
+    }
+
+    #[test]
+    fn large_file_paths_prefers_first_usable_root() {
+        let tempdir = new_test_dir("Bridging L2–L3_large_paths_prefers_first_usable_root");
+        let first_root = tempdir.join("first_root");
+        let second_root = tempdir.join("second_root");
+        std::fs::create_dir_all(&second_root).unwrap();
+
+        let large_file_paths = LargeFilePaths {
+            paths: vec![
+                first_root.join("child").to_string_lossy().into_owned(),
+                second_root.to_string_lossy().into_owned(),
+            ],
+        };
+
+        let logs_dir = large_file_paths.kv_logs_dir("test_cluster").unwrap();
+        assert_eq!(
+            logs_dir,
+            first_root
+                .join("child")
+                .join("test_cluster_cluster_kv_logs")
+        );
+        assert!(logs_dir.exists());
+
+        let third_party_logs_dir = large_file_paths
+            .third_party_logs_dir("test_cluster")
+            .unwrap();
+        assert_eq!(
+            third_party_logs_dir,
+            first_root
+                .join("child")
+                .join("test_cluster_cluster_third_party_logs")
+        );
+        assert!(third_party_logs_dir.exists());
+    }
+
+    #[test]
+    fn large_file_paths_uses_all_usable_roots_for_kv_ssd_storage() {
+        let tempdir = new_test_dir("Bridging L2–L3_large_paths_uses_all_usable_roots_for_kv_ssd_storage");
+        let first_root = tempdir.join("first_root");
+        let second_root = tempdir.join("second_root");
+
+        let large_file_paths = LargeFilePaths {
+            paths: vec![
+                first_root.to_string_lossy().into_owned(),
+                second_root.to_string_lossy().into_owned(),
+            ],
+        };
+
+        let dirs = large_file_paths
+            .kv_ssd_storage_dirs("test_cluster", "owner/a:b")
+            .unwrap();
+        assert_eq!(
+            dirs,
+            vec![
+                first_root.join(
+                    "test_cluster_cluster_kv_ssd_storage/v1-a2c1effab8d74aa90b8f7b43f9afa10f4c9f5899dd880fc176d33cc06cf7200a"
+                ),
+                second_root.join(
+                    "test_cluster_cluster_kv_ssd_storage/v1-a2c1effab8d74aa90b8f7b43f9afa10f4c9f5899dd880fc176d33cc06cf7200a"
+                ),
+            ]
+        );
+        assert!(dirs.iter().all(|dir| dir.exists()));
+    }
+
+    #[test]
+    fn client_test_spec_config_accepts_explicit_rdma_device_names() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_with_rpc
+  disable_crossowner_ipc: true
+  iceoryx_external_busy_poll: true
+  iceoryx_owner_client_busy_poll: false
+  tcp_thread_reactor_shard_count: 2
+  tcp_thread_bulk_lane_count: 4
+  tcp_thread_control_lane_count: 3
+  rdma_device_names: [" mlx5_4 ", "mlx5_0", "mlx5_4"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.rdma_device_names,
+            Some(vec!["mlx5_0".to_string(), "mlx5_4".to_string()])
+        );
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0,mlx5_4".to_string())
+        );
+        assert!(verified.test_spec_config.disable_crossowner_ipc);
+        assert!(verified.test_spec_config.iceoryx_external_busy_poll);
+        assert!(!verified.test_spec_config.iceoryx_owner_client_busy_poll);
+        assert_eq!(
+            verified.test_spec_config.tcp_thread_reactor_shard_count,
+            Some(2)
+        );
+        assert_eq!(
+            verified.test_spec_config.tcp_thread_bulk_lane_count,
+            Some(4)
+        );
+        assert_eq!(
+            verified.test_spec_config.tcp_thread_control_lane_count,
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_implicit_transport_mode_with_rdma_device_names_defaults_to_transfer_with_rpc()
+     {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  rdma_device_names: ["mlx5_0"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.transport_mode,
+            Some(TestSpecTransportMode::TransferWithRpc)
+        );
+        assert_eq!(
+            verified.test_spec_config.rdma_device_names,
+            Some(vec!["mlx5_0".to_string()])
+        );
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+        assert!(verified.Bridging L2–L3kv_spec.enable_transfer_rpc_fast_path);
+    }
+
+    #[test]
+    fn client_test_spec_config_accepts_transfer_rpc_fast_path_ready_timeout() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_with_rpc
+  rdma_device_names: ["mlx5_0"]
+  require_transfer_rpc_fast_path_ready_timeout_seconds: 45
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified
+                .test_spec_config
+                .require_transfer_rpc_fast_path_ready_timeout_seconds,
+            Some(45)
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_rejects_transfer_rpc_fast_path_ready_timeout_without_explicit_rdma_device_names()
+     {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  require_transfer_rpc_fast_path_ready_timeout_seconds: 45
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        assert!(err.to_string().contains(
+            "test_spec_config.require_transfer_rpc_fast_path_ready_timeout_seconds requires explicit test_spec_config.rdma_device_names"
+        ));
+    }
+
+    #[test]
+    fn client_test_spec_config_rejects_invalid_tcp_thread_control_lane_count() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  tcp_thread_control_lane_count: 0
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("test_spec_config.tcp_thread_control_lane_count must be in [1, 8]")
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_uses_single_closed_mode() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_with_rpc
+  rdma_device_names: ["mlx5_0"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+        assert_eq!(
+            verified.Bridging L2–L3kv_spec.transfer_engine,
+            TransferEngineType::Closed
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_rejects_unknown_legacy_field() {
+        let err = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_with_rpc
+  rdma_device_names: ["mlx5_0"]
+  legacy_transfer_backend: closed
+"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("unknown field `legacy_transfer_backend`"));
+    }
+
+    #[test]
+    fn client_test_spec_config_rdma_device_names_use_default_transport_mode() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  rdma_device_names: ["mlx5_0"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(
+            verified.test_spec_config.transport_mode,
+            Some(TestSpecTransportMode::TransferWithRpc)
+        );
+        assert_eq!(
+            verified.test_spec_config.rdma_device_names,
+            Some(vec!["mlx5_0".to_string()])
+        );
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+    }
+
+    #[test]
+    fn client_test_spec_config_rejects_transport_mode_without_rdma_device_names() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_only
+"#,
+        )
+        .unwrap();
+        assert!(cfg.verify().is_err());
+    }
+
+    #[test]
+    fn client_config_derives_tcp_for_side_transfer_worker() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_side_worker
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_side_worker
+  p2p_listen_port: 18081
+test_spec_config:
+  enable_side_transfer: true
+  side_transfer_role: worker
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.protocol.protocol_type, ProtocolType::Tcp);
+        assert_eq!(
+            verified.share_mem_path,
+            "/tmp/test_side_worker/test_cluster"
+        );
+        assert_eq!(
+            verified.Bridging L2–L3kv_spec.transfer_engine,
+            TransferEngineType::P2p
+        );
+        assert!(!verified.Bridging L2–L3kv_spec.enable_transfer_rpc_fast_path);
+        assert_eq!(
+            verified.test_spec_config.side_transfer_role,
+            Some(SideTransferRole::Worker)
+        );
+    }
+
+    #[test]
+    fn client_config_accepts_side_transfer_worker_without_explicit_p2p_port() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_side_worker
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_side_worker
+test_spec_config:
+  enable_side_transfer: true
+  side_transfer_role: worker
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.protocol.protocol_type, ProtocolType::Tcp);
+        assert_eq!(verified.Bridging L2–L3kv_spec.p2p_listen_port, None);
+        assert_eq!(
+            verified.Bridging L2–L3kv_spec.transfer_engine,
+            TransferEngineType::P2p
+        );
+        assert!(!verified.Bridging L2–L3kv_spec.enable_transfer_rpc_fast_path);
+        assert_eq!(
+            verified.test_spec_config.side_transfer_role,
+            Some(SideTransferRole::Worker)
+        );
+    }
+
+    #[test]
+    fn client_config_rejects_test_spec_protocol_type_for_side_transfer_worker() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_side_worker
+Bridging L2–L3kv_spec:
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_side_worker
+test_spec_config:
+  enable_side_transfer: true
+  side_transfer_role: worker
+  protocol_type: tcp
+"#,
+        )
+        .unwrap();
+        let err = cfg.verify().unwrap_err();
+        assert!(
+            format!("{err}")
+                .contains("test_spec_config.protocol_type is not valid for side-transfer workers")
+        );
+    }
+
+    #[test]
+    fn client_config_accepts_owner_side_transfer_workers_without_port_base() {
+        let cfg = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  p2p_listen_port: 18081
+  sub_cluster: rack-a
+test_spec_config:
+  enable_side_transfer: true
+  side_transfer_worker_count: 4
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.protocol.protocol_type, ProtocolType::Rdma);
+        assert_eq!(verified.test_spec_config.side_transfer_worker_count, 4);
+        assert_eq!(
+            verified.test_spec_config.side_transfer_worker_p2p_port_base,
+            None
+        );
+    }
+
+    #[test]
+    fn client_config_rejects_removed_protocol_block() {
+        let err = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+protocol:
+  protocol_type: tcp
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("unknown field `protocol`"));
+    }
+
+    #[test]
+    fn client_config_rejects_unknown_legacy_override() {
+        let err = ClientConfigYaml::from_str(
+            r#"
+instance_key: test_owner
+contribute_to_cluster_pool_size:
+  dram: 16777216
+  vram: {}
+Bridging L2–L3kv_spec:
+  etcd_addresses: ["127.0.0.1:2379"]
+  cluster_name: test_cluster
+  share_mem_path: /tmp/test_owner
+  large_file_paths: [/tmp/test_owner_large]
+  sub_cluster: rack-a
+test_spec_config:
+  transport_mode: transfer_with_rpc
+  rdma_device_names: ["mlx5_0"]
+  legacy_transfer_backend: closed
+"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("unknown field `legacy_transfer_backend`"));
+    }
+
+    #[test]
+    fn master_config_rejects_removed_protocol_type() {
+        let err = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+  protocol_type: tcp
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+"#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("unknown field `protocol_type`"));
+    }
+
+    #[test]
+    fn master_config_defaults_tcp_reactor_to_busy_poll() {
+        let verified = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            verified.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::BusyPoll
+        );
+    }
+
+    #[test]
+    fn master_test_spec_config_transfer_with_rpc_keeps_rpc_fast_path() {
+        let cfg = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+  tcp_reactor_mode: event_driven
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+test_spec_config:
+  disable_prefix_index: true
+  disable_crossowner_ipc: true
+  iceoryx_owner_client_busy_poll: false
+  transport_mode: transfer_with_rpc
+  rdma_device_names: [" mlx5_4 ", "mlx5_0", "mlx5_4"]
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert!(verified.test_spec_config.disable_prefix_index);
+        assert!(verified.test_spec_config.disable_crossowner_ipc);
+        assert!(!verified.test_spec_config.iceoryx_owner_client_busy_poll);
+        assert_eq!(
+            verified.protocol.tcp_thread_reactor,
+            TcpThreadReactorWaitMode::EventDriven
+        );
+        assert_eq!(
+            verified.test_spec_config.transport_mode,
+            Some(TestSpecTransportMode::TransferWithRpc)
+        );
+        assert_eq!(
+            verified.test_spec_config.rdma_device_names,
+            Some(vec!["mlx5_0".to_string(), "mlx5_4".to_string()])
+        );
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0,mlx5_4".to_string())
+        );
+        assert!(verified.enable_transfer_rpc_fast_path);
+    }
+
+    #[test]
+    fn master_test_spec_protocol_type_accepts_tcp() {
+        let cfg = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+test_spec_config:
+  protocol_type: tcp
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(cfg.protocol.protocol_type, ProtocolType::Tcp);
+        assert_eq!(cfg.transfer_engine, TransferEngineType::Closed);
+    }
+
+    #[test]
+    fn master_network_rdma_device_names_are_trimmed_and_must_be_non_empty() {
+        let verified = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+  rdma_device_names: "  mlx5_0  "
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+"#,
+        )
+        .unwrap()
+        .verify()
+        .unwrap();
+        assert_eq!(
+            verified.protocol.rdma_device_names,
+            Some("mlx5_0".to_string())
+        );
+
+        let invalid = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+port: 18080
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+  rdma_device_names: "   "
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+"#,
+        )
+        .unwrap();
+        let err = invalid.verify().unwrap_err();
+        assert!(format!("{err}").contains("network.rdma_device_names must be a non-empty string"));
+    }
+
+    #[test]
+    fn master_config_accepts_missing_port_for_auto_discovery() {
+        let cfg = MasterConfigYaml::from_str(
+            r#"
+instance_key: test_master
+cluster_name: test_cluster
+etcd_endpoints: ["127.0.0.1:2379"]
+network:
+  subnet_whitelist: ["127.0.0.0/8"]
+monitoring:
+  prometheus_base_url: "http://127.0.0.1:4000/v1/prometheus"
+log_dir: /tmp/test_master_logs
+"#,
+        )
+        .unwrap();
+        let verified = cfg.verify().unwrap();
+        assert_eq!(verified.port, None);
+    }
+}

@@ -159,7 +159,7 @@ def _docker_build_append_command_sequence(
             input_index=next_input_index[0],
         )
         next_input_index[0] += 1
-        container_script_path = f"/tmp/fluxon_image_build/{next_input_index[0]:04d}_{script_path.name}"
+        container_script_path = f"/tmp/Bridging L2–L3_image_build/{next_input_index[0]:04d}_{script_path.name}"
         dockerfile_lines.append(f"COPY {context_rel_path} {container_script_path}")
         dockerfile_lines.append(
             _docker_build_render_run(
@@ -323,7 +323,7 @@ def build_docker_image_from_config(project_root: Union[str, Path], config_yaml: 
         )
 
     next_input_index = [0]
-    with tempfile.TemporaryDirectory(prefix="fluxon_docker_build_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_docker_build_") as temp_dir_str:
         context_root = Path(temp_dir_str)
         for step_idx, step_cfg in enumerate(script_installs):
             step_name = _docker_build_require_non_empty_string(
@@ -550,7 +550,7 @@ def build_docker_run_cmd(
     """Build a `docker run` command (without executing it).
 
     Args:
-        image: Image name (with tag), e.g. "fluxon_quick_start:0.2.4".
+        image: Image name (with tag), e.g. "Bridging L2–L3_quick_start:0.2.4".
         name: Container name (`--name`).
         remove: Auto-remove on exit (`--rm`).
         detach: Run detached (`-d`).

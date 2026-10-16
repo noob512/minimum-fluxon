@@ -6,7 +6,7 @@ This page describes the Bridging L2–L3 Python KV API and node-to-node RPC call
 
 See [Architecture and Concepts](<./User - 1 - Architecture and Concepts.md>) for `cluster_name`, `instance_key`, `etcd`, and the other base concepts.
 
-For business code, prefer passing a Python dict directly into `FluxonKvClientConfig(...)`. YAML is better suited to standalone processes, supervisors, deployment, and example environments.
+For business code, prefer passing a Python dict directly into `Bridging L2–L3KvClientConfig(...)`. YAML is better suited to standalone processes, supervisors, deployment, and example environments.
 
 ### Service Plane
 
@@ -23,7 +23,7 @@ The minimal local startup example is `examples/start_master_owner.py`. It only s
 
 - `etcd` at `127.0.0.1:2379`
 - `Greptime` HTTP at `127.0.0.1:34030`
-- the current Python environment already installed the unified `fluxon_py-*.whl`
+- the current Python environment already installed the unified `Bridging L2–L3_py-*.whl`
 
 ### Minimal Role Startup Example
 
@@ -34,19 +34,19 @@ import argparse
 
 from pathlib import Path
 
-from fluxon_py.runtime import (
+from Bridging L2–L3_py.runtime import (
     start_kv_master_process,
     start_owner_kvclient_process,
     wait_subproc_or_ctrlc,
 )
-from fluxon_py.runtime.process_runner import ManagedSubprocess
+from Bridging L2–L3_py.runtime.process_runner import ManagedSubprocess
 
 ETCD_ENDPOINT = "127.0.0.1:2379"
 GREPTIME_HTTP_PORT = 34030
 GREPTIME_BASE_URL = f"http://127.0.0.1:{GREPTIME_HTTP_PORT}"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = Path("/dev/shm/fluxon_kv_demo").resolve()
-WORKDIR = Path("/tmp/fluxon_kv_demo/runtime").resolve()
+SHARE_MEM_PATH = Path("/dev/shm/Bridging L2–L3_kv_demo").resolve()
+WORKDIR = Path("/tmp/Bridging L2–L3_kv_demo/runtime").resolve()
 MASTER_PORT = 31000
 MASTER_UI_PORT = 18080
 MASTER_INSTANCE_KEY = "demo_kv_master"
@@ -80,24 +80,24 @@ def main() -> None:
         children.append(ManagedSubprocess(label="master", proc=master_proc))
     children.append(ManagedSubprocess(label="owner", proc=owner_proc))
 
-    print(f"[fluxon_kv] share_mem_path: {SHARE_MEM_PATH}")
-    print(f"[fluxon_kv] etcd endpoint: {ETCD_ENDPOINT}")
-    print(f"[fluxon_kv] greptime base url: {GREPTIME_BASE_URL}")
-    print(f"[fluxon_kv] start master in this script: {args.with_master}")
+    print(f"[Bridging L2–L3_kv] share_mem_path: {SHARE_MEM_PATH}")
+    print(f"[Bridging L2–L3_kv] etcd endpoint: {ETCD_ENDPOINT}")
+    print(f"[Bridging L2–L3_kv] greptime base url: {GREPTIME_BASE_URL}")
+    print(f"[Bridging L2–L3_kv] start master in this script: {args.with_master}")
     if master_stdout_log is not None:
-        print(f"[fluxon_kv] master stdout log: {master_stdout_log}")
+        print(f"[Bridging L2–L3_kv] master stdout log: {master_stdout_log}")
         print(
-            "[fluxon_kv] kv web ui: "
+            "[Bridging L2–L3_kv] kv web ui: "
             f"http://<host-ip-or-domain>:{MASTER_UI_PORT}/view?cluster_name={CLUSTER_NAME}&member_kind=kv"
         )
     else:
-        print("[fluxon_kv] master stdout log: disabled by --without-master")
-    print(f"[fluxon_kv] owner stdout log: {owner_stdout_log}")
+        print("[Bridging L2–L3_kv] master stdout log: disabled by --without-master")
+    print(f"[Bridging L2–L3_kv] owner stdout log: {owner_stdout_log}")
     stack_label = "master and owner" if args.with_master else "owner"
-    print(f"[fluxon_kv] waiting for Ctrl-C to stop {stack_label}")
+    print(f"[Bridging L2–L3_kv] waiting for Ctrl-C to stop {stack_label}")
     wait_subproc_or_ctrlc(
         children,
-        on_ctrlc=lambda: print(f"[fluxon_kv] caught Ctrl-C, stopping {stack_label}"),
+        on_ctrlc=lambda: print(f"[Bridging L2–L3_kv] caught Ctrl-C, stopping {stack_label}"),
     )
 
 
@@ -137,7 +137,7 @@ def build_owner_config() -> dict:
             "dram": OWNER_DRAM_BYTES,
             "vram": {},
         },
-        "fluxonkv_spec": {
+        "Bridging L2–L3kv_spec": {
             "etcd_addresses": [ETCD_ENDPOINT],
             "cluster_name": CLUSTER_NAME,
             "share_mem_path": str(SHARE_MEM_PATH),
@@ -161,7 +161,7 @@ python3 examples/start_master_owner.py --without-master
 ### Lifecycle and Call Flow
 
 ```text
-FluxonKvClientConfig
+Bridging L2–L3KvClientConfig
             |
             v
 new_store(cfg) -> KvClient
@@ -178,8 +178,8 @@ close()
 
 ### Core Python Objects
 
-- `FluxonKvClientConfig`: config object, usually built from a Python dict
-- `new_store(config: FluxonKvClientConfig) -> Result[KvClient, ApiError]`: create one KV client
+- `Bridging L2–L3KvClientConfig`: config object, usually built from a Python dict
+- `new_store(config: Bridging L2–L3KvClientConfig) -> Result[KvClient, ApiError]`: create one KV client
 - `KvClient`: single entrypoint for both KV and RPC
 - `MemHolder`: successful result holder from `get_blocking(...)`
 - `PutOptionalArgs`: optional write controls, most commonly `lease_id`
@@ -203,18 +203,18 @@ Both KV values and RPC payloads use one flat-dict contract:
 ```python
 #!/usr/bin/env python3
 
-from fluxon_py import FluxonKvClientConfig, new_store
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig, new_store
 
 INSTANCE_KEY = "demo_kv_external"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = "/dev/shm/fluxon_kv_demo"
+SHARE_MEM_PATH = "/dev/shm/Bridging L2–L3_kv_demo"
 
 
 def main() -> None:
-    cfg = FluxonKvClientConfig(
+    cfg = Bridging L2–L3KvClientConfig(
         {
             "instance_key": INSTANCE_KEY,
-            "fluxonkv_spec": {
+            "Bridging L2–L3kv_spec": {
                 "cluster_name": CLUSTER_NAME,
                 "share_mem_path": SHARE_MEM_PATH,
             },
@@ -260,7 +260,7 @@ Useful calls:
 To increase user-process logs:
 
 ```bash
-FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
+Bridging L2–L3_LOG=DEBUG python3 examples/external_put_get_del.py
 ```
 
 
@@ -274,19 +274,19 @@ FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
 import argparse
 import signal
 
-from fluxon_py import FluxonKvClientConfig, new_store
+from Bridging L2–L3_py import Bridging L2–L3KvClientConfig, new_store
 
 RPC_SERVER_INSTANCE_KEY = "demo_rpc_server"
 RPC_CLIENT_INSTANCE_KEY = "demo_rpc_client"
 CLUSTER_NAME = "demo-kv-cluster"
-SHARE_MEM_PATH = "/dev/shm/fluxon_kv_demo"
+SHARE_MEM_PATH = "/dev/shm/Bridging L2–L3_kv_demo"
 
 
-def _build_config(*, instance_key: str) -> FluxonKvClientConfig:
-    return FluxonKvClientConfig(
+def _build_config(*, instance_key: str) -> Bridging L2–L3KvClientConfig:
+    return Bridging L2–L3KvClientConfig(
         {
             "instance_key": instance_key,
-            "fluxonkv_spec": {
+            "Bridging L2–L3kv_spec": {
                 "cluster_name": CLUSTER_NAME,
                 "share_mem_path": SHARE_MEM_PATH,
             },
@@ -335,7 +335,7 @@ cluster_name: demo-kv-cluster
 port: 31000
 etcd_endpoints:
   - 127.0.0.1:2379
-log_dir: /var/lib/fluxon/master_logs
+log_dir: /var/lib/Bridging L2–L3/master_logs
 ```
 
 Minimal external-client YAML:
@@ -343,9 +343,9 @@ Minimal external-client YAML:
 ```yaml
 instance_key: my-kv-client-1
 
-fluxonkv_spec:
+Bridging L2–L3kv_spec:
   cluster_name: demo-kv-cluster
-  share_mem_path: /dev/shm/fluxon
+  share_mem_path: /dev/shm/Bridging L2–L3
   p2p_listen_port: 31001
 ```
 
@@ -358,11 +358,11 @@ contribute_to_cluster_pool_size:
   dram: 1677721600
   vram: {}
 
-fluxonkv_spec:
+Bridging L2–L3kv_spec:
   etcd_addresses:
     - 127.0.0.1:2379
   cluster_name: demo-kv-cluster
-  share_mem_path: /dev/shm/fluxon
+  share_mem_path: /dev/shm/Bridging L2–L3
   p2p_listen_port: 31000
   sub_cluster: default
 ```
@@ -371,9 +371,9 @@ Keep these roots separate:
 
 - `share_mem_path`: shared bundle root. Runtime appends `cluster_name`, and that directory holds `mmap.file`, `shared.json`, and peer metadata.
 - `large_file_paths`: `Owner Client`-only large-file authority for logs, profiles, caches, and other derived runtime assets
-- `FLUXON_LOG`: console log threshold for the user process
+- `Bridging L2–L3_LOG`: console log threshold for the user process
 
-In zero-contribution external mode, `Owner Client`-only fields such as `fluxonkv_spec.etcd_addresses`, `fluxonkv_spec.sub_cluster`, `fluxonkv_spec.large_file_paths`, and `fluxonkv_spec.redis_compat` should not appear.
+In zero-contribution external mode, `Owner Client`-only fields such as `Bridging L2–L3kv_spec.etcd_addresses`, `Bridging L2–L3kv_spec.sub_cluster`, `Bridging L2–L3kv_spec.large_file_paths`, and `Bridging L2–L3kv_spec.redis_compat` should not appear.
 
 #### Network and TCP thread reactor tuning
 

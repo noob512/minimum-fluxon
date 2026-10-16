@@ -47,7 +47,7 @@ flowchart TD
 如果只看 `MemHolder`，会漏掉两类更底层的问题：
 
 - `get/put` 在 master 上先分配出来的 `Allocation` 其实早就决定了 slot 生命周期；holder 只是后续借用关系。
-- `owner / external` 的跨库传输会经过 `fluxon_kv -> fluxon_commu -> closed_sdk`，这时真正被异步 transport 读取的是本地 segment 地址，不是抽象的 `holder_id`。
+- `owner / external` 的跨库传输会经过 `Bridging L2–L3_kv -> Bridging L2–L3_commu -> closed_sdk`，这时真正被异步 transport 读取的是本地 segment 地址，不是抽象的 `holder_id`。
 
 因此当前实现里至少有三种不同粒度的 authority：
 
@@ -323,9 +323,9 @@ pub(crate) trait MemholderManagerTrait: Sync {
 
 ### 问题背景
 
-当前 `owner / external` 的数据传输会经过 `fluxon_kv -> fluxon_commu -> closed_sdk` 这条链路。
+当前 `owner / external` 的数据传输会经过 `Bridging L2–L3_kv -> Bridging L2–L3_commu -> closed_sdk` 这条链路。
 
-`fluxon_kv` 本地原本已经有 segment read guard：
+`Bridging L2–L3_kv` 本地原本已经有 segment read guard：
 
 ```rust
 pub struct ClientCpuMemReadGuard {
@@ -340,7 +340,7 @@ pub struct ClientCpuMemReadGuard {
 
 但它不能直接跨到 `commu / closed_sdk`：
 
-- 这个 guard 是 `fluxon_kv` 内部 Rust 类型，不是 public contract。
+- 这个 guard 是 `Bridging L2–L3_kv` 内部 Rust 类型，不是 public contract。
 - 它不是 FFI-safe 类型，不能直接跨库传递。
 - 如果让 `commu` 直接依赖 `ClientCpuMemReadGuard`，层次会反过来。
 

@@ -1,0 +1,315 @@
+pub mod dag_viz_html;
+pub mod dev_config;
+pub mod fs_watch;
+pub mod git_version_build_record;
+pub mod hash;
+pub mod init_dag_compiler;
+pub mod map_lock;
+pub mod merge_recent_async_notifies;
+pub mod notify_state;
+pub mod prefix_scan;
+pub mod prom_remote_write;
+pub mod scoped_future_set;
+pub mod semaphore_map;
+pub mod stream;
+pub mod build_info {
+    pub const GIT_COMMIT_ID: &str = env!("GIT_COMMIT_HASH");
+    pub const SOURCE_SHA256: &str = env!("Bridging L2–L3_RS_SOURCE_SHA256");
+
+    pub fn format_long_version(pkg_version: &str) -> String {
+        format!(
+            "{}\ncommit: {}\nsource-sha256: {}",
+            pkg_version, GIT_COMMIT_ID, SOURCE_SHA256
+        )
+    }
+}
+pub mod auto_clean_map;
+pub mod etcd;
+pub mod lease_manager;
+pub mod run_async_from_sync;
+pub mod test_util;
+pub mod vallocator;
+// Logging related code moved into its own module to keep crate root clean.
+pub mod log;
+// Rate limit utilities
+pub mod limitrate;
+// PyO3 helpers: run long-time Python call without holding GIL in caller thread.
+pub mod pyo3;
+// Re-export for stable public API: existing call sites can keep using `Bridging L2–L3_util::init_log`.
+pub use log::{
+    DEFAULT_DAILY_LOG_RETENTION_DAYS, current_daily_sharded_log_path, current_log_file_path,
+    daily_sharded_log_path, display_runtime_log_path, init_log, init_log_test,
+    init_log_with_extra_layer, latest_existing_daily_sharded_log_path, resolve_readable_log_path,
+};
+#[cfg(test)]
+mod test_util_test;
+
+use anyhow::{Result, anyhow, bail};
+use local_ip_address::list_afinet_netifas;
+use std::path::PathBuf;
+/// 综合宏：同时生成枚举定义和 From<i32> 实现
+/// example:
+/// define_error_code_enum_with_from! {
+///     #[repr(i32)]
+///     #[derive(Debug, Clone, Copy, PartialEq)]
+///     pub enum AllocErrorCode {
+///         Success = 0,
+///         OutOfMemory = 1,
+///         InvalidSize = 2,
+///         InvalidPointer = 3,
+///         DoubleFree = 4,
+///         InvalidAddress = 5,
+///         NewException = 6,
+///         DeallocationException = 7,
+///         DeallocationUnknownException = 8,
+///         AllocationFailed = 9,
+///         AllocationException = 10,
+///         AllocationUnknownException = 11,
+///         SizeNotAligned = 12,
+///         InvalidCode = 10000000,
+///     }
+///     default: AllocErrorCode::InvalidCode
+/// }
+#[macro_export]
+macro_rules! define_error_code_enum_with_from {
+    (
+        $(#[$attr:meta])*
+        $vis:vis enum $name:ident {
+            $($(#[$variant_attr:meta])* $variant:ident = $value:expr),* $(,)?
+        }
+        default: $default:expr
+    ) => {
+        // 生成枚举定义
+        $(#[$attr])*
+        $vis enum $name {
+            $($(#[$variant_attr])* $variant = $value,)*
+        }
+
+        // 生成 From<i32> 实现
+        impl From<i32> for $name {
+            fn from(value: i32) -> Self {
+                match value {
+                    $(
+                        $value => $name::$variant,
+                    )*
+                    _ => $default,
+                }
+            }
+        }
+    };
+}
+
+/// 获取主机IP地址
+pub fn get_host_ip() -> Result<String> {
+    let network_interfaces = list_afinet_netifas()
+        .map_err(|e| anyhow!("fail to get local network info, err:{:?}", e))?;
+    let mut addresses = network_interfaces
+        .into_iter()
+        .filter(|(_, ip)| !ip.is_loopback())
+        .map(|(_, ip)| ip.to_string())
+        .collect::<Vec<String>>();
+    if addresses.len() > 0 {
+        return Ok(addresses.remove(0));
+    }
+
+    bail!("No non-loopback IP address found")
+}
+
+#[macro_export]
+macro_rules! new_map {
+    // 匹配空映射
+    ($map_type:ident { }) => {
+        $map_type::new()
+    };
+    // 匹配一个或多个键值对
+    ($map_type:ident { $($key:expr => $value:expr),+ $(,)? }) => {{
+        let map = $map_type::from([
+            $( ($key, $value), )+
+        ]);
+        map
+    }};
+}
+
+pub fn build_target_dir_() -> PathBuf {
+    let target_name = std::env::var("CARGO_TARGET_DIR").unwrap_or("target".to_string());
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let mut cur_dir = PathBuf::from(out_dir.clone());
+    while cur_dir.file_name().unwrap() != &*target_name {
+        cur_dir = cur_dir.parent().unwrap().to_owned();
+    }
+    cur_dir
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{current_log_file_path, init_log};
+    use std::fs;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+    use tracing::{debug, error, info, warn};
+
+    fn assert_logged_text(active_log_path: &Path, needles: &[&str]) {
+        let content = fs::read_to_string(active_log_path).expect("Failed to read active log file");
+        for needle in needles {
+            assert!(
+                content.contains(needle),
+                "Log should contain {needle:?} in {}",
+                active_log_path.display()
+            );
+        }
+    }
+
+    #[cfg(trybuild)]
+    #[test]
+    fn trybuild_scoped_sync_async_bridge() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/compile_tests/scoped_sync_async_bridge/pass/*.rs");
+        t.compile_fail("tests/compile_tests/scoped_sync_async_bridge/fail/*.rs");
+    }
+
+    #[test]
+    #[serial_test::serial(log_init)]
+    fn test_init_log_with_file_path() {
+        // 创建临时目录用于日志文件
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let log_path = temp_dir.path();
+        let instance_key = "test_instance";
+        let previous_path = current_log_file_path();
+
+        // 初始化日志系统
+        init_log(log_path, instance_key);
+
+        // 写入不同级别的日志
+        debug!("This is a debug message");
+        info!("This is an info message");
+        warn!("This is a warning message");
+        error!("This is an error message");
+
+        // 等待日志写入
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let active_log_path = current_log_file_path().expect("active log file path should exist");
+        if let Some(ref previous_path) = previous_path {
+            assert_eq!(
+                active_log_path, *previous_path,
+                "init_log should preserve the first active log file path within a process"
+            );
+        } else {
+            assert!(
+                active_log_path.exists(),
+                "active log file should exist: {}",
+                active_log_path.display()
+            );
+        }
+        if previous_path.is_none() && active_log_path.starts_with(log_path) {
+            let file_name = active_log_path
+                .file_name()
+                .expect("active log file name")
+                .to_string_lossy();
+            assert!(
+                file_name.contains(instance_key),
+                "active log file should include instance key when this test owns initialization"
+            );
+            assert_logged_text(
+                &active_log_path,
+                &[
+                    "debug message",
+                    "info message",
+                    "warning message",
+                    "error message",
+                ],
+            );
+        }
+    }
+
+    // 移除“不指定日志路径”的测试：生产入口强制要求提供 log_path。
+    #[test]
+    #[serial_test::serial(log_init)]
+    fn test_init_log_invalid_path() {
+        // 测试无效路径的处理
+        let invalid_path = PathBuf::from("/proc/invalid_path_that_cannot_be_created/logs");
+
+        // 这应该会打印错误信息但不会 panic
+        init_log(&invalid_path, "test_instance");
+
+        // 验证不会崩溃
+        info!("This should still work");
+    }
+
+    // 移除 init_log_test 相关测试：测试不再使用测试专用 logger。
+
+    #[test]
+    #[serial_test::serial(log_init)]
+    fn test_log_file_rotation() {
+        // 测试日志文件按天滚动的功能
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let log_path = temp_dir.path();
+        let instance_key = "rotation_test";
+        let previous_path = current_log_file_path();
+
+        // 初始化日志
+        init_log(log_path, instance_key);
+
+        // 写入一些日志
+        for i in 0..10 {
+            info!("Log message {}", i);
+            warn!("Warning message {}", i);
+        }
+
+        // 等待日志写入
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let active_log_path = current_log_file_path().expect("active log file path should exist");
+        if let Some(ref previous_path) = previous_path {
+            assert_eq!(
+                active_log_path, *previous_path,
+                "init_log should preserve the first active log file path within a process"
+            );
+        } else {
+            assert!(
+                active_log_path.exists(),
+                "active log file should exist: {}",
+                active_log_path.display()
+            );
+            assert!(
+                active_log_path.starts_with(log_path),
+                "first init_log call should bind to the requested directory"
+            );
+            let file_name = active_log_path
+                .file_name()
+                .expect("active log file name")
+                .to_string_lossy();
+            assert!(
+                file_name.contains("Bridging L2–L3-kv-rotation_test"),
+                "first init_log call should use the requested instance key"
+            );
+            assert_logged_text(&active_log_path, &["Log message 0", "Warning message 0"]);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(log_init)]
+    fn test_multiple_init_log_calls() {
+        // 测试多次调用 init_log 的行为
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let log_path = temp_dir.path();
+
+        // 第一次初始化
+        init_log(log_path, "instance1");
+        info!("First init message");
+        let first_path = current_log_file_path().expect("first active log file path");
+
+        // 第二次初始化（应该被忽略，因为 try_init 会失败）
+        init_log(log_path, "instance2");
+        info!("Second init message");
+
+        // 验证不会崩溃
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            current_log_file_path().as_ref(),
+            Some(&first_path),
+            "multiple init_log calls should preserve the first active log file path"
+        );
+    }
+}

@@ -29,7 +29,7 @@
 
 - 控制面成员发现：`master`、`owner`、`external` 都通过 `ClusterManager` 注册到 `etcd`。成员区分主要靠 `member_id + metadata`，其中会带上角色标记（声明当前成员是 `master`、`owner` 还是 `external`）、`local_ipc_root`（声明本机 IPC 根目录，供本地拓扑规划和 attach 路径对齐）、`shared_storage_node_id`（声明当前 `external` 绑定并复用的是哪个 `owner` 数据面，也说明共享内存路径归属在哪一侧）、`rdma_control`（声明该成员当前的 RDMA 控制面配置与开关状态）等字段；`master` 基于这套成员视图维护路由、lease 和 readiness authority。
 - 本机 `external -> owner`：`external` 启动时先等待 `owner` 发布的 `shared.json + mmap.file`，完成共享内存 attach，再等待 owner 成员可观测。后续 `get / put / delete / is_exist / delete_ack` 这些入口，代码里都是先取 `shared_storage_node_id()`，也就是先把请求发给绑定 owner。本地 IPC tier 用的是 `iceoryx2`，`local_ipc_root` 也会发布到成员元数据里供拓扑规划；但 value payload 本体主要还是通过 owner 共享内存 bundle 零拷贝读写，不是只靠 IPC 消息搬运。若启用了 side-transfer，`put_start / put_transfer_end` 也可能先打 owner 拉起的 side-transfer worker，但仍属于 owner 这一侧的本地入口。
-- `owner <-> master` 与 `owner <-> owner`：统一走 `fluxon_commu` 的 `P2pModule + transfer_engine`。控制 RPC、owner 间转发、跨机数据搬运都在这层完成；底层传输按配置可走 RDMA 或 TCP。这一层不只覆盖同集群直连，也支持跨子集群、跨集群的 relay / forwarding；当源 owner 和目标 owner 之间不能直接按理想链路互通时，数据面和控制面都可以经由中继路径继续完成。
+- `owner <-> master` 与 `owner <-> owner`：统一走 `Bridging L2–L3_commu` 的 `P2pModule + transfer_engine`。控制 RPC、owner 间转发、跨机数据搬运都在这层完成；底层传输按配置可走 RDMA 或 TCP。这一层不只覆盖同集群直连，也支持跨子集群、跨集群的 relay / forwarding；当源 owner 和目标 owner 之间不能直接按理想链路互通时，数据面和控制面都可以经由中继路径继续完成。
 
 ### master
 

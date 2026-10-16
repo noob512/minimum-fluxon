@@ -8,8 +8,8 @@ import yaml
 
 from deployment.utils.deployconf_config_utils import (
     load_deployconf_etcd_address,
-    load_deployconf_fluxon_cluster_name,
-    load_deployconf_fluxon_share_mem_path,
+    load_deployconf_Bridging L2–L3_cluster_name,
+    load_deployconf_Bridging L2–L3_share_mem_path,
     load_deployconf_mapping,
     load_deployconf_prom_remote_write_url,
     load_deployconf_prometheus_base_url,
@@ -33,15 +33,15 @@ __all__ = [
     "load_test_config_mapping",
     "load_test_kv_svc_type_from_test_config",
     "load_test_etcd_address_from_test_config",
-    "load_test_fluxon_cluster_name_from_test_config",
-    "load_test_fluxon_share_mem_path_from_test_config",
+    "load_test_Bridging L2–L3_cluster_name_from_test_config",
+    "load_test_Bridging L2–L3_share_mem_path_from_test_config",
     "load_deployconf_mapping",
     "load_deployconf_resolved_global_envs",
     "load_deployconf_etcd_address",
     "load_deployconf_prometheus_base_url",
     "load_deployconf_prom_remote_write_url",
-    "load_deployconf_fluxon_cluster_name",
-    "load_deployconf_fluxon_share_mem_path",
+    "load_deployconf_Bridging L2–L3_cluster_name",
+    "load_deployconf_Bridging L2–L3_share_mem_path",
     "load_deployconf_service_ip_port",
 ]
 
@@ -320,21 +320,21 @@ def _load_yaml_mapping(config_path: Path, *, label: str) -> Dict[str, Any]:
 
 
 def load_test_config_mapping(*, config_path: Optional[Path] = None) -> Dict[str, Any]:
-    """Load fluxon_py test_config.yaml.
+    """Load Bridging L2–L3_py test_config.yaml.
 
     Contract:
     - The test-layer config is separate from build_config_ext.yml.
-    - If config_path is omitted, prefer FLUXON_TEST_CONFIG_PATH when set; otherwise load
-      fluxon_py/tests/test_config.yaml from the repo.
+    - If config_path is omitted, prefer Bridging L2–L3_TEST_CONFIG_PATH when set; otherwise load
+      Bridging L2–L3_py/tests/test_config.yaml from the repo.
     - No upward search or fallback is used so the authority stays explicit.
     """
     if config_path is None:
-        env_config_path = os.environ.get("FLUXON_TEST_CONFIG_PATH", "").strip()
+        env_config_path = os.environ.get("Bridging L2–L3_TEST_CONFIG_PATH", "").strip()
         if env_config_path:
             config_path = Path(env_config_path)
         else:
             repo_root = Path(__file__).resolve().parents[2]
-            config_path = repo_root / "fluxon_py" / "tests" / "test_config.yaml"
+            config_path = repo_root / "Bridging L2–L3_py" / "tests" / "test_config.yaml"
     return _load_yaml_mapping(Path(config_path), label="test_config.yaml")
 
 
@@ -345,7 +345,7 @@ def load_test_kv_svc_type_from_test_config(*, config_path: Optional[Path] = None
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("test_config.yaml must define non-empty kv_svc_type")
     value = raw.strip().lower()
-    from fluxon_py.kvclient import KvClientType as _KvClientType
+    from Bridging L2–L3_py.kvclient import KvClientType as _KvClientType
 
     allowed = {e.value for e in _KvClientType}
     if value not in allowed:
@@ -363,8 +363,8 @@ def load_test_etcd_address_from_test_config(*, config_path: Optional[Path] = Non
     return f"{host}:{port}"
 
 
-def load_test_fluxon_cluster_name_from_test_config(*, config_path: Optional[Path] = None) -> str:
-    """Load Fluxon cluster name from test_config.yaml as the single test authority."""
+def load_test_Bridging L2–L3_cluster_name_from_test_config(*, config_path: Optional[Path] = None) -> str:
+    """Load Bridging L2–L3 cluster name from test_config.yaml as the single test authority."""
     test_cfg = load_test_config_mapping(config_path=config_path)
     raw = test_cfg.get("cluster_name")
     if not isinstance(raw, str) or not raw.strip():
@@ -372,8 +372,8 @@ def load_test_fluxon_cluster_name_from_test_config(*, config_path: Optional[Path
     return raw.strip()
 
 
-def load_test_fluxon_share_mem_path_from_test_config(*, config_path: Optional[Path] = None) -> str:
-    """Load Fluxon shared bundle root from test_config.yaml as the single test authority."""
+def load_test_Bridging L2–L3_share_mem_path_from_test_config(*, config_path: Optional[Path] = None) -> str:
+    """Load Bridging L2–L3 shared bundle root from test_config.yaml as the single test authority."""
     test_cfg = load_test_config_mapping(config_path=config_path)
     raw = test_cfg.get("share_mem_path")
     if not isinstance(raw, str) or not raw.strip():

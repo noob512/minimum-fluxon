@@ -105,11 +105,11 @@ KV SSD 复用 owner 已有的 `large_file_paths`，不增加第二套路径参�
 
 ### 2.1 配置入口
 
-配置仍位于 owner 的 `fluxonkv_spec`；`large_limit_size` 与 `large_file_paths` 等长：
+配置仍位于 owner 的 `Bridging L2–L3kv_spec`；`large_limit_size` 与 `large_file_paths` 等长：
 
 ```yaml
-fluxonkv_spec:
-  large_file_paths: [/data/fluxon_large0, /data/fluxon_large1] # Derive one KV SSD cache root from each path.
+Bridging L2–L3kv_spec:
+  large_file_paths: [/data/Bridging L2–L3_large0, /data/Bridging L2–L3_large1] # Derive one KV SSD cache root from each path.
   large_limit_size: ["4GB", "8GB"]                           # Limit the matching cache roots in the same order.
 ```
 
@@ -1060,7 +1060,7 @@ if backend == "MOONCAKE":
     # Internal adapter calls Mooncake Store.get_buffer().
     result = mooncake_store.get_buffer_blocking(key)  # Fetch a native BufferHandle.
 else:
-    result = fluxon_store.get_blocking(key)           # Fetch a native MemHolder.
+    result = Bridging L2–L3_store.get_blocking(key)           # Fetch a native MemHolder.
 
 native_ref = result.unwrap()  # Keep the native host reference alive while counting success.
 ```
@@ -1202,7 +1202,7 @@ Bridging L2–L3 / Mooncake 主图和 Bridging L2–L3 SSD backend 消融均关�
 
 下图的两行分别是原生引用 / handle 和 `bytes`，四列分别是 1/4/8/16 MiB。每个 payload 分面覆盖 c2/c4/c8/c16；每个并发度固定按 Bridging L2–L3、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青分别区分三种实现组，浅色表示 DRAM、深色表示 SSD，红点使用右轴表示总命中率。各 payload 分面使用独立左轴，范围写在右上角。
 
-CPU 的 192 条记录覆盖 `2 输出模式 × 4 payload × 4 并发度 × 3 实现组 × 2 SSD 状态`。`fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_cpu_sweep.py` 与 GPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。输入文件按命令行顺序覆盖同 case key；最终矩阵缺一条、存在 error、来源不完整或 unknown 非零都会直接失败。
+CPU 的 192 条记录覆盖 `2 输出模式 × 4 payload × 4 并发度 × 3 实现组 × 2 SSD 状态`。`Bridging L2–L3_test_stack/single_node_ssd_bench/plot_kv_ssd_cpu_sweep.py` 与 GPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。输入文件按命令行顺序覆盖同 case key；最终矩阵缺一条、存在 error、来源不完整或 unknown 非零都会直接失败。
 
 | 实现组 | SSD-off 命中率 | SSD-on 命中率 | SSD-on 中 SSD 来源占 hit |
 | --- | --- | --- | --- |
@@ -1248,7 +1248,7 @@ Foyer 内部另设 1 B memory capacity、1 个 memory shard，并用 filter 关�
 
 图按 `MemHolder` / `bytes` 分成两行，每行覆盖 1 / 4 / 8 / 16 MiB；每个并发度放置原生与 Foyer 两根柱。蓝/紫区分 SSD 实现，浅/深区分 DRAM 与 SSD 来源，红点表示命中率。
 
-PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_foyer_ablation.py` 读取原始汇总生成。脚本要求 64 条记录的 case key 完整，校验容量、并发布局、统计窗口、来源计数和配对控制项后才绘图。这里的 64 是测量记录数，即 32 个原生/Foyer 配对，不表示 64 种部署。
+PNG 由 `Bridging L2–L3_test_stack/single_node_ssd_bench/plot_kv_ssd_foyer_ablation.py` 读取原始汇总生成。脚本要求 64 条记录的 case key 完整，校验容量、并发布局、统计窗口、来源计数和配对控制项后才绘图。这里的 64 是测量记录数，即 32 个原生/Foyer 配对，不表示 64 种部署。
 
 所有配对的命中率都是 100%，因此这组差距没有 miss 数量优势可以解释。P95 的同向变化表明差距同时出现在延迟侧。`bytes` 会在两侧共同追加完整 payload 物化，其中位比值高于 `MemHolder` 与公共物化成本稀释 backend 相对差异相容，但单次矩阵不足以分解这部分因果贡献。
 
@@ -1262,7 +1262,7 @@ PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_foyer_ablation.py` 
 
 GPU 与 CPU 使用同一种画法，只少了原生引用 / `bytes` 两行。4、8、16 MiB 各占一个分面；每个分面都覆盖 c2/c4/c8/c16，每个并发度再按 Bridging L2–L3、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青区分三种实现，浅色表示 DRAM、深色表示 SSD，红点显示命中率；六组 case 都从 native host buffer 进入同一条 `cuda` H2D 路径。
 
-GPU PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_gpu_sweep.py` 读取一个或多个 pressure 汇总，并与 CPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。脚本校验最终 72 条记录完整后直接使用 Pillow 绘制；各 payload 分面使用独立左轴，命中率共用 0%–100% 右轴。
+GPU PNG 由 `Bridging L2–L3_test_stack/single_node_ssd_bench/plot_kv_ssd_gpu_sweep.py` 读取一个或多个 pressure 汇总，并与 CPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。脚本校验最终 72 条记录完整后直接使用 Pillow 绘制；各 payload 分面使用独立左轴，命中率共用 0%–100% 右轴。
 
 | 拓扑 | SSD-off 命中率 | SSD-on 命中率 | SSD-on 中 SSD 来源占 hit |
 | --- | --- | --- | --- |

@@ -41,17 +41,17 @@ Bridging L2–L3 KV 的 Python 接口需要支持两类高频 payload：
 
 | 模块 | 角色 | 这层负责什么 |
 | --- | --- | --- |
-| `fluxon_py/kvclient/kvclient_interface.py` | Python 公共契约 | 定义 `FlatDict` 和用户可见值类型 |
-| `fluxon_py/kvclient/fluxon.py` | Python 写入入口 | 把 `FlatDict` 转成 pointer tuple，并管理 put future 的 keepalive |
-| `fluxon_py/kvclient/nonzerocopy_encode.py` | Python 纯编码/解码辅助 | 处理纯 Python 的 flat dict encode/decode 和 DLPack 包装 |
-| `fluxon_rs/fluxon_pyo3/src/flatdict_zerocopy.rs` | Rust 权威实现 | 编码计划、DLPack 校验、返回视图重建 |
-| `fluxon_rs/fluxon_pyo3/src/lib.rs` | PyO3 公开绑定面 | 暴露 put/get/rpc 方法，并区分 pointer path 与 bytes path |
+| `Bridging L2–L3_py/kvclient/kvclient_interface.py` | Python 公共契约 | 定义 `FlatDict` 和用户可见值类型 |
+| `Bridging L2–L3_py/kvclient/Bridging L2–L3.py` | Python 写入入口 | 把 `FlatDict` 转成 pointer tuple，并管理 put future 的 keepalive |
+| `Bridging L2–L3_py/kvclient/nonzerocopy_encode.py` | Python 纯编码/解码辅助 | 处理纯 Python 的 flat dict encode/decode 和 DLPack 包装 |
+| `Bridging L2–L3_rs/Bridging L2–L3_pyo3/src/flatdict_zerocopy.rs` | Rust 权威实现 | 编码计划、DLPack 校验、返回视图重建 |
+| `Bridging L2–L3_rs/Bridging L2–L3_pyo3/src/lib.rs` | PyO3 公开绑定面 | 暴露 put/get/rpc 方法，并区分 pointer path 与 bytes path |
 
 ## 3. 整体架构与数据流
 
 ```mermaid
 flowchart LR
-    A[Python 业务代码<br/>FlatDict] --> B[fluxon.py<br/>build_flat_dict_ptrs / encode_flat_kv_dict]
+    A[Python 业务代码<br/>FlatDict] --> B[Bridging L2–L3.py<br/>build_flat_dict_ptrs / encode_flat_kv_dict]
     B --> C[PyO3 Binding]
     C --> D[flatdict_zerocopy.rs<br/>FlatDictEncodePlan]
     D --> E[KV / RPC Payload]
@@ -69,7 +69,7 @@ flowchart LR
 
 ### 4.1 公共值契约
 
-Python 面向用户的稳定值对象定义在 `fluxon_py/kvclient/kvclient_interface.py`：
+Python 面向用户的稳定值对象定义在 `Bridging L2–L3_py/kvclient/kvclient_interface.py`：
 
 ```python
 FlatDict = Dict[str, Union[int, float, bool, str, bytes, DLPacked]]
@@ -82,13 +82,13 @@ FlatDict = Dict[str, Union[int, float, bool, str, bytes, DLPacked]]
 
 这里还定义了一个保留键：
 
-- `__fluxon_internal_dlpack_meta__`
+- `__Bridging L2–L3_internal_dlpack_meta__`
 
 用户不能手动占用它；它只给内部 DLPack 元数据 sidecar 使用。
 
 ### 4.2 Python 侧的值分类和 pointer tuple
 
-`fluxon_py/kvclient/fluxon.py::build_flat_dict_ptrs` 会把一个 `FlatDict` 拆成 pointer tuple 数组：
+`Bridging L2–L3_py/kvclient/Bridging L2–L3.py::build_flat_dict_ptrs` 会把一个 `FlatDict` 拆成 pointer tuple 数组：
 
 - `(type_id, key_ptr, key_len, value_ptr_or_inline_bits, value_len, reserved)`
 
@@ -124,13 +124,13 @@ FlatDict = Dict[str, Union[int, float, bool, str, bytes, DLPacked]]
 当前实现的做法是：
 
 - `build_flat_dict_ptrs(...)` 返回 pointer tuple 时，同时把相关 Python 对象放进 `keepalive` 和 `dlpack_capsules`。
-- 这两组对象被挂在 `_FluxonPutFuture` 上。
-- 只有 `wait()` 完成后，`_FluxonPutFuture` 才清空这两组引用。
+- 这两组对象被挂在 `_Bridging L2–L3PutFuture` 上。
+- 只有 `wait()` 完成后，`_Bridging L2–L3PutFuture` 才清空这两组引用。
 
 ```mermaid
 sequenceDiagram
     participant User as Python 业务代码
-    participant Client as fluxon.py
+    participant Client as Bridging L2–L3.py
     participant PyO3 as PyO3 Binding
     participant Rust as FlatDictEncodePlan
 
@@ -141,7 +141,7 @@ sequenceDiagram
     PyO3->>Rust: build_py_flat_dict_encode_plan(...)
     Rust-->>PyO3: 编码计划构建完成
     PyO3-->>Client: 返回 inner future
-    Client-->>User: 返回 _FluxonPutFuture
+    Client-->>User: 返回 _Bridging L2–L3PutFuture
     User->>Client: future.wait()
     Client->>Client: 清空 keepalive / dlpack_capsules
 ```
@@ -155,7 +155,7 @@ sequenceDiagram
 
 Rust 侧真正把 Python 传入值组织成稳定编码计划的文件是：
 
-- `fluxon_rs/fluxon_pyo3/src/flatdict_zerocopy.rs`
+- `Bridging L2–L3_rs/Bridging L2–L3_pyo3/src/flatdict_zerocopy.rs`
 
 核心结构是 `FlatDictEncodePlan`。它内部把存储分成三个桶：
 
@@ -177,7 +177,7 @@ Rust 侧真正把 Python 传入值组织成稳定编码计划的文件是：
 Rust 侧不会把 tensor 当作一种独立 wire type。当前策略是把它拆成两部分：
 
 1. 数据面：tensor 对应的原始字节区间，按普通 `bytes` field 编码。
-2. 控制面：`dtype_code / bits / lanes / shape`，序列化到保留键 `__fluxon_internal_dlpack_meta__`。
+2. 控制面：`dtype_code / bits / lanes / shape`，序列化到保留键 `__Bridging L2–L3_internal_dlpack_meta__`。
 
 这个 sidecar 策略的直接收益：
 
@@ -221,11 +221,11 @@ Rust 侧不会把 tensor 当作一种独立 wire type。当前策略是把它拆
 
 ### 5.1 返回链路的入口
 
-返回链路的核心入口仍在 `fluxon_rs/fluxon_pyo3/src/flatdict_zerocopy.rs`：
+返回链路的核心入口仍在 `Bridging L2–L3_rs/Bridging L2–L3_pyo3/src/flatdict_zerocopy.rs`：
 
 - `decode_flat_dict_to_wrapped_py_object`
 
-这一步会先 decode flat dict payload，然后检查是否存在 `__fluxon_internal_dlpack_meta__`。
+这一步会先 decode flat dict payload，然后检查是否存在 `__Bridging L2–L3_internal_dlpack_meta__`。
 
 后续逻辑是：
 
@@ -267,7 +267,7 @@ get 返回时的零拷贝含义是：
 
 ### 5.4 Python 纯辅助路径的职责
 
-`fluxon_py/kvclient/nonzerocopy_encode.py` 里还有两组相关对象：
+`Bridging L2–L3_py/kvclient/nonzerocopy_encode.py` 里还有两组相关对象：
 
 - `DLPackBytesView`
 - `wrap_flat_dict_dlpack`
@@ -292,7 +292,7 @@ get 返回时的零拷贝含义是：
 | DLPack 必须是 C-contiguous | 非 contiguous tensor 直接拒绝 |
 | `byte_offset == 0` | 当前不支持偏移视图 |
 | `nbytes <= u32::MAX` | 当前编码和 wire 长度边界要求 |
-| 保留键不能被用户占用 | `__fluxon_internal_dlpack_meta__` 只给内部 sidecar 使用 |
+| 保留键不能被用户占用 | `__Bridging L2–L3_internal_dlpack_meta__` 只给内部 sidecar 使用 |
 
 ### 6.2 真实零拷贝范围
 

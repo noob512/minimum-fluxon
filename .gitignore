@@ -3,7 +3,7 @@ target
 __pycache__
 **/__pycache__
 .vscode
-fluxon_rs/log
+Bridging L2–L3_rs/log
 build
 dist
 .venv
@@ -19,7 +19,7 @@ wheels
 *.whl
 .claude
 .obsidian
-fluxon_doc/._*
+Bridging L2–L3_doc/._*
 *generated.yaml
 default.etcd
 *.checksum
@@ -27,36 +27,36 @@ default.etcd
 .trash
 *.lock.json
 *.wait.json
-fluxon_py/examples/fluxon_allinone/mooncake_test_work/*
-fluxon_py/examples/fluxon_allinone/fluxon_work/*
+Bridging L2–L3_py/examples/Bridging L2–L3_allinone/mooncake_test_work/*
+Bridging L2–L3_py/examples/Bridging L2–L3_allinone/Bridging L2–L3_work/*
 log
 git_diff_to_master
 git_diff_staged
-fluxon_doc_rt
+Bridging L2–L3_doc_rt
 .cached
 .tmp/
 .tmp_*
 .pack*
-fluxon_release/*
-!fluxon_release/install.py
-!fluxon_release/resolve_release_meta.py
-!fluxon_release/closed_sdk/
-!fluxon_release/closed_sdk/**
-!fluxon_release/release_notes/
-!fluxon_release/release_notes/**
-!fluxon_release/test_rsc/
-fluxon_release/test_rsc/*
-!fluxon_release/test_rsc/source/
-!fluxon_release/test_rsc/source/**
+Bridging L2–L3_release/*
+!Bridging L2–L3_release/install.py
+!Bridging L2–L3_release/resolve_release_meta.py
+!Bridging L2–L3_release/closed_sdk/
+!Bridging L2–L3_release/closed_sdk/**
+!Bridging L2–L3_release/release_notes/
+!Bridging L2–L3_release/release_notes/**
+!Bridging L2–L3_release/test_rsc/
+Bridging L2–L3_release/test_rsc/*
+!Bridging L2–L3_release/test_rsc/source/
+!Bridging L2–L3_release/test_rsc/source/**
 node_modules
-fluxon_test_stack/bench_runner/
-fluxon_test_stack/start_test_bed/
-fluxon_test_stack/.manual_dispatch_release_tmp/
+Bridging L2–L3_test_stack/bench_runner/
+Bridging L2–L3_test_stack/start_test_bed/
+Bridging L2–L3_test_stack/.manual_dispatch_release_tmp/
 .dever
-fluxon_release_*
+Bridging L2–L3_release_*
 *.exit
 bench_suite.lock
 .bench-venv
 deployment/local/
-setup_and_pack/pack_fluxonkv_pylib_env.yaml
-fluxon_rs/moka/
+setup_and_pack/pack_Bridging L2–L3kv_pylib_env.yaml
+Bridging L2–L3_rs/moka/

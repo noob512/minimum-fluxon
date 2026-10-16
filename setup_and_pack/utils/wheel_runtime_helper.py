@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def extract_wheel(wheel_path: str) -> str:
-    temp_dir = tempfile.mkdtemp(prefix="fluxon_wheel_")
+    temp_dir = tempfile.mkdtemp(prefix="Bridging L2–L3_wheel_")
     with zipfile.ZipFile(wheel_path, "r") as zip_ref:
         zip_ref.extractall(temp_dir)
     return temp_dir
@@ -79,7 +79,7 @@ def _normalize_extracted_wheel_lib_rpaths(*, source_root: Path, pkg_name: str) -
 
     for ext_path in sorted(pkg_dir.glob("*.so")):
         # Extension modules should resolve bundled runtime libs from the wheel.
-        _set_rpath(ext_path, "$ORIGIN:$ORIGIN/../fluxon_pyo3.libs")
+        _set_rpath(ext_path, "$ORIGIN:$ORIGIN/../Bridging L2–L3_pyo3.libs")
 
     if libs_dir.is_dir():
         for lib_path in sorted(libs_dir.glob("*.so*")):
@@ -90,7 +90,7 @@ def _normalize_extracted_wheel_lib_rpaths(*, source_root: Path, pkg_name: str) -
 
 
 def normalize_wheel_lib_rpaths(wheel_path: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="fluxon_wheel_rpath_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_wheel_rpath_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
@@ -118,7 +118,7 @@ def add_shared_libraries(
     packaged_lib_replacements: dict[str, str] | None = None,
 ) -> None:
     packaged_lib_replacements = packaged_lib_replacements or {}
-    with tempfile.TemporaryDirectory(prefix="fluxon_wheel_libs_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_wheel_libs_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
@@ -146,7 +146,7 @@ def install_shared_libraries(
     wheel_path: str,
     library_paths_by_name: dict[str, str],
 ) -> None:
-    with tempfile.TemporaryDirectory(prefix="fluxon_wheel_install_libs_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_wheel_install_libs_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
@@ -168,7 +168,7 @@ def add_plugins(wheel_path: str, plugins_dir: str, bundle_name: str) -> None:
     source_root = Path(plugins_dir)
     if not source_root.is_dir():
         raise RuntimeError(f"plugin directory is missing: {source_root}")
-    with tempfile.TemporaryDirectory(prefix="fluxon_wheel_plugins_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_wheel_plugins_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)
@@ -191,9 +191,9 @@ def merge_binary_wheel(
     output_wheel_path: str,
     pure_python_wheel_path: str,
     runtime_wheel_path: str,
-    runtime_package_name: str = "fluxon_pyo3",
+    runtime_package_name: str = "Bridging L2–L3_pyo3",
 ) -> None:
-    with tempfile.TemporaryDirectory(prefix="fluxon_wheel_merge_") as temp_dir_str:
+    with tempfile.TemporaryDirectory(prefix="Bridging L2–L3_wheel_merge_") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         with zipfile.ZipFile(pure_python_wheel_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir)

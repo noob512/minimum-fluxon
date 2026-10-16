@@ -38,9 +38,9 @@ Bridging L2–L3 是面向 AI 工作负载的分布式 KV Cache 与 RPC 数据�
 
 ## Python 公共接口
 
-`fluxon_py` 提供以下几组稳定接口：
+`Bridging L2–L3_py` 提供以下几组稳定接口：
 
-- `FluxonKvClientConfig` 与 `new_store(...)`：创建客户端。
+- `Bridging L2–L3KvClientConfig` 与 `new_store(...)`：创建客户端。
 - `put`、`get`、`remove`、`is_exist`、`get_size`、`count_prefix`：KV 操作。
 - `MemHolder`：访问 native value 并管理显式生命周期。
 - `rpc_call` 与 `rpc_register`：类型化用户 RPC。
@@ -52,7 +52,7 @@ Bridging L2–L3 是面向 AI 工作负载的分布式 KV Cache 与 RPC 数据�
 
 - Linux（原生运行时以及 SSD/RDMA 路径）。
 - Python 3.10 或更高版本。
-- [`fluxon_rs/rust-toolchain.toml`](./fluxon_rs/rust-toolchain.toml) 指定的 Rust 工具链。
+- [`Bridging L2–L3_rs/rust-toolchain.toml`](./Bridging L2–L3_rs/rust-toolchain.toml) 指定的 Rust 工具链。
 - 用于集群元数据和租约的 etcd。
 - 启用监控配置时使用 GreptimeDB endpoint。
 
@@ -67,10 +67,10 @@ python3 -m pip install -e .
 构建 Rust workspace：
 
 ```bash
-cargo build --manifest-path fluxon_rs/Cargo.toml
+cargo build --manifest-path Bridging L2–L3_rs/Cargo.toml
 ```
 
-Python 包从 `fluxon_py` 导入；需要平台相关原生绑定时，由 Rust workspace 构建对应扩展。
+Python 包从 `Bridging L2–L3_py` 导入；需要平台相关原生绑定时，由 Rust workspace 构建对应扩展。
 
 ## 最小本地流程
 
@@ -91,8 +91,8 @@ Python 包从 `fluxon_py` 导入；需要平台相关原生绑定时，由 Rust 
 
 ## 目录结构
 
-- `fluxon_py/`：Python 客户端、配置、监控和运行时辅助代码。
-- `fluxon_rs/`：Rust KV 实现、传输、RPC、可观测性和 Python 绑定。
+- `Bridging L2–L3_py/`：Python 客户端、配置、监控和运行时辅助代码。
+- `Bridging L2–L3_rs/`：Rust KV 实现、传输、RPC、可观测性和 Python 绑定。
 - `examples/`：KV Cache 与 RPC 示例。
 - `Bridging L2–L3_doc_en/`：英文安装、架构和 KV-RPC 文档。
 - `Bridging L2–L3_doc_cn/`：中文安装、架构和 KV-RPC 文档。
@@ -116,9 +116,9 @@ Python 包从 `fluxon_py` 导入；需要平台相关原生绑定时，由 Rust 
 在仓库根目录运行源码检查：
 
 ```bash
-python3 -m compileall -q fluxon_py examples setup.py
-cargo fmt --manifest-path fluxon_rs/Cargo.toml --all -- --check
-cargo metadata --manifest-path fluxon_rs/Cargo.toml --no-deps --format-version 1
+python3 -m compileall -q Bridging L2–L3_py examples setup.py
+cargo fmt --manifest-path Bridging L2–L3_rs/Cargo.toml --all -- --check
+cargo metadata --manifest-path Bridging L2–L3_rs/Cargo.toml --no-deps --format-version 1
 ```
 
 完整运行测试还需要原生工具链以及已配置的 etcd 和监控服务。本仓库用于源码检查和聚焦评估，不是完整发布包。
