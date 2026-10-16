@@ -94,20 +94,20 @@ Python 包从 `fluxon_py` 导入；需要平台相关原生绑定时，由 Rust 
 - `fluxon_py/`：Python 客户端、配置、监控和运行时辅助代码。
 - `fluxon_rs/`：Rust KV 实现、传输、RPC、可观测性和 Python 绑定。
 - `examples/`：KV Cache 与 RPC 示例。
-- `fluxon_doc_en/`：英文安装、架构和 KV-RPC 文档。
-- `fluxon_doc_cn/`：中文安装、架构和 KV-RPC 文档。
+- `Bridging L2–L3_doc_en/`：英文安装、架构和 KV-RPC 文档。
+- `Bridging L2–L3_doc_cn/`：中文安装、架构和 KV-RPC 文档。
 - `setup_and_pack/`：Python 构建保留的打包辅助工具。
 
 ## 文档入口
 
 建议先阅读安装和架构文档，再阅读 KV-RPC 接口文档了解客户端行为：
 
-- [`fluxon_doc_en/user_doc/User - 0 - Installation.md`](./fluxon_doc_en/user_doc/User%20-%200%20-%20Installation.md)
-- [`fluxon_doc_en/user_doc/User - 1 - Architecture and Concepts.md`](./fluxon_doc_en/user_doc/User%20-%201%20-%20Architecture%20and%20Concepts.md)
-- [`fluxon_doc_en/user_doc/User - 3 - KV and RPC Interface.md`](./fluxon_doc_en/user_doc/User%20-%203%20-%20KV%20and%20RPC%20Interface.md)
-- [`fluxon_doc_cn/user_doc/用户 - 0 - 安装.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%200%20-%20%E5%AE%89%E8%A3%85.md)
-- [`fluxon_doc_cn/user_doc/用户 - 1 - 架构和概念.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%201%20-%20%E6%9E%B6%E6%9E%84%E5%92%8C%E6%A6%82%E5%BF%B5.md)
-- [`fluxon_doc_cn/user_doc/用户 - 3 - KV-RPC接口.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%203%20-%20KV-RPC%E6%8E%A5%E5%8F%A3.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 0 - Installation.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%200%20-%20Installation.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 1 - Architecture and Concepts.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%201%20-%20Architecture%20and%20Concepts.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 3 - KV and RPC Interface.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%203%20-%20KV%20and%20RPC%20Interface.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 0 - 安装.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%200%20-%20%E5%AE%89%E8%A3%85.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 1 - 架构和概念.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%201%20-%20%E6%9E%B6%E6%9E%84%E5%92%8C%E6%A6%82%E5%BF%B5.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 3 - KV-RPC接口.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%203%20-%20KV-RPC%E6%8E%A5%E5%8F%A3.md)
 
 设计文档进一步说明路由、holder 生命周期、Python/Rust 零拷贝调用、并发和 SSD 存储。
 

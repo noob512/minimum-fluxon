@@ -94,20 +94,20 @@ The example writes a value, reads it through the KV client, removes it, and chec
 - `fluxon_py/` — Python client, configuration, monitoring, and runtime helpers.
 - `fluxon_rs/` — Rust KV implementation, transport, RPC, observability, and Python binding.
 - `examples/` — small KV Cache and RPC examples.
-- `fluxon_doc_en/` — English installation, architecture, and KV-RPC documentation.
-- `fluxon_doc_cn/` — Chinese installation, architecture, and KV-RPC documentation.
+- `Bridging L2–L3_doc_en/` — English installation, architecture, and KV-RPC documentation.
+- `Bridging L2–L3_doc_cn/` — Chinese installation, architecture, and KV-RPC documentation.
 - `setup_and_pack/` — packaging helpers retained by the Python build.
 
 ## Documentation
 
 Start with the installation and architecture guides, then use the KV-RPC guide for client behavior:
 
-- [`fluxon_doc_en/user_doc/User - 0 - Installation.md`](./fluxon_doc_en/user_doc/User%20-%200%20-%20Installation.md)
-- [`fluxon_doc_en/user_doc/User - 1 - Architecture and Concepts.md`](./fluxon_doc_en/user_doc/User%20-%201%20-%20Architecture%20and%20Concepts.md)
-- [`fluxon_doc_en/user_doc/User - 3 - KV and RPC Interface.md`](./fluxon_doc_en/user_doc/User%20-%203%20-%20KV%20and%20RPC%20Interface.md)
-- [`fluxon_doc_cn/user_doc/用户 - 0 - 安装.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%200%20-%20%E5%AE%89%E8%A3%85.md)
-- [`fluxon_doc_cn/user_doc/用户 - 1 - 架构和概念.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%201%20-%20%E6%9E%B6%E6%9E%84%E5%92%8C%E6%A6%82%E5%BF%B5.md)
-- [`fluxon_doc_cn/user_doc/用户 - 3 - KV-RPC接口.md`](./fluxon_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%203%20-%20KV-RPC%E6%8E%A5%E5%8F%A3.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 0 - Installation.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%200%20-%20Installation.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 1 - Architecture and Concepts.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%201%20-%20Architecture%20and%20Concepts.md)
+- [`Bridging L2–L3_doc_en/user_doc/User - 3 - KV and RPC Interface.md`](./Bridging%20L2%E2%80%93L3_doc_en/user_doc/User%20-%203%20-%20KV%20and%20RPC%20Interface.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 0 - 安装.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%200%20-%20%E5%AE%89%E8%A3%85.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 1 - 架构和概念.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%201%20-%20%E6%9E%B6%E6%9E%84%E5%92%8C%E6%A6%82%E5%BF%B5.md)
+- [`Bridging L2–L3_doc_cn/user_doc/用户 - 3 - KV-RPC接口.md`](./Bridging%20L2%E2%80%93L3_doc_cn/user_doc/%E7%94%A8%E6%88%B7%20-%203%20-%20KV-RPC%E6%8E%A5%E5%8F%A3.md)
 
 The design notes cover routing, holder lifetimes, Python/Rust zero-copy calls, concurrency, and SSD storage.
 
