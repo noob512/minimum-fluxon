@@ -9,7 +9,7 @@
 
 ## 1. 背景与目标
 
-Fluxon KV 的 Python 接口需要支持两类高频 payload：
+Bridging L2–L3 KV 的 Python 接口需要支持两类高频 payload：
 
 - 普通 `bytes`
 - 由 numpy / torch 等第三方框架导出的 DLPack tensor
@@ -251,7 +251,7 @@ Rust 侧不会把 tensor 当作一种独立 wire type。当前策略是把它拆
 
 - 返回一个遵守 DLPack 契约的 view object
 
-这样 Fluxon 自己不需要依赖具体框架类型，只需要保证 `__dlpack__` 语义成立。
+这样 Bridging L2–L3 自己不需要依赖具体框架类型，只需要保证 `__dlpack__` 语义成立。
 
 ### 5.3 返回路径的零拷贝语义
 
@@ -317,4 +317,4 @@ get 返回时的零拷贝含义是：
 1. 这条链路的公共契约是 `FlatDict`，不是裸指针 API。
 2. `put` 路径的核心优化点在 pointer tuple + future keepalive；真正的权威实现是 Rust 的 `FlatDictEncodePlan`。
 3. `rpc_call(payload: FlatDict)` 当前走的是“先编码成 payload bytes，再跨边界传递”的路径，不能等同于 `put` 的借用式零拷贝。
-4. `get` 返回时，Fluxon 会重建 `FlatDictDLPackView`，继续暴露 `__dlpack__`，但不会恢复成原始第三方 tensor 类型。
+4. `get` 返回时，Bridging L2–L3 会重建 `FlatDictDLPackView`，继续暴露 `__dlpack__`，但不会恢复成原始第三方 tensor 类型。

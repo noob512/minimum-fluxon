@@ -1,6 +1,6 @@
 # Architecture and Concepts
 
-Fluxon is a distributed KV Cache and RPC data plane. A KV master coordinates membership and metadata; owner clients provide shared-memory or SSD-backed capacity; external clients access the same data through RPC and peer-to-peer transport.
+Bridging L2–L3 is a distributed KV Cache and RPC data plane. A KV master coordinates membership and metadata; owner clients provide shared-memory or SSD-backed capacity; external clients access the same data through RPC and peer-to-peer transport.
 
 ## Core roles
 

@@ -2,7 +2,7 @@
 
 ## 目标
 
-本文补充当前 `Fluxon KV` 的内部设计，聚焦以下几个问题：
+本文补充当前 `Bridging L2–L3 KV` 的内部设计，聚焦以下几个问题：
 
 - `master`、`owner`、`external` 三类角色各自持有什么状态。
 - `put / get / delete` 在当前实现里的真实调用时序。

@@ -2,7 +2,7 @@
 
 ## KV 和 RPC 接口
 
-本页描述 Fluxon 的 Python KV API 和节点间 RPC 调用。两者由同一个 `KvClient` 实例提供，共享生命周期。
+本页描述 Bridging L2–L3 的 Python KV API 和节点间 RPC 调用。两者由同一个 `KvClient` 实例提供，共享生命周期。
 
 `cluster_name`、`instance_key`、`etcd` 等前置概念见 [架构和概念](用户%20-%201%20-%20架构和概念.md)。
 
@@ -19,7 +19,7 @@ Python 业务代码优先直接在代码里写 Python dict，并传给 `FluxonKv
 - `start_kv_master_process(...)`：启动 `fluxonkv master`
 - `start_owner_kvclient_process(...)`：启动 `owner`
 
-最小可运行示例脚本如下。这个脚本只启动 Fluxon 自己的角色；`etcd` / `greptime` 仍按服务平面文档单独启动，并且默认假设：
+最小可运行示例脚本如下。这个脚本只启动 Bridging L2–L3 自己的角色；`etcd` / `greptime` 仍按服务平面文档单独启动，并且默认假设：
 
 - `etcd` 在 `127.0.0.1:2379`
 - `greptime` HTTP 在 `127.0.0.1:34030`
@@ -319,11 +319,11 @@ FLUXON_LOG=DEBUG python3 examples/external_put_get_del.py
 日志相关对象如下：
 
 - `FLUXON_LOG`：控制当前 Python 业务进程 console logger 的输出门限
-- Fluxon Python 侧 logger 会读取 `FLUXON_LOG`；合法值是 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`，默认 `INFO`
+- Bridging L2–L3 Python 侧 logger 会读取 `FLUXON_LOG`；合法值是 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`，默认 `INFO`
 - `log_dir`：`master` 本地日志 authority
 - `share_mem_path`：KV 共享 bundle 根目录，只承载 `mmap.file`、`shared.json` 和 peer metadata
 - `large_file_paths`：owner 侧大文件根目录，日志、profile、cache 等运行时资产都从这里派生
-- `store.third_party_logs_dir().unwrap(...)`：返回 `{large_file_paths[0]}/{cluster_name}_cluster_third_party_logs`。第三方 Python 组件应只在这个根目录下派生自己的子目录，这样目录使用更收束，Fluxon 观测平面也能统一感知和采集这些文件日志。
+- `store.third_party_logs_dir().unwrap(...)`：返回 `{large_file_paths[0]}/{cluster_name}_cluster_third_party_logs`。第三方 Python 组件应只在这个根目录下派生自己的子目录，这样目录使用更收束，Bridging L2–L3 观测平面也能统一感知和采集这些文件日志。
 
 如果服务平面的 `master.monitoring.otlp_log_api` 已经配置，后台服务日志还会继续采集到 Greptime 的 `fluxon_logs` 表。
 
@@ -614,7 +614,7 @@ network:
   tcp_reactor_mode: event_driven
 ```
 
-生产配置不提供协议选择能力。未设置测试覆盖时，公开 bundled Fluxon KV runtime
+生产配置不提供协议选择能力。未设置测试覆盖时，公开 bundled Bridging L2–L3 KV runtime
 保持当前默认值 RDMA。测试和 benchmark 如需切换协议或使用故障隔离开关，请使用独立的
 。
 

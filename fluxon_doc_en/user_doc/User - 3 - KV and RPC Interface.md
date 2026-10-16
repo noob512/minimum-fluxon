@@ -2,7 +2,7 @@
 
 ## KV and RPC Interface
 
-This page describes Fluxon's Python KV API and node-to-node RPC calls. Both are exposed from the same `KvClient` instance and share one lifecycle.
+This page describes the Bridging L2–L3 Python KV API and node-to-node RPC calls. Both are exposed from the same `KvClient` instance and share one lifecycle.
 
 See [Architecture and Concepts](<./User - 1 - Architecture and Concepts.md>) for `cluster_name`, `instance_key`, `etcd`, and the other base concepts.
 
@@ -16,10 +16,10 @@ The most common objects are:
 
 - `Greptime`: standard observability path
 - `etcd`: KV control-plane metadata
-- `start_kv_master_process(...)`: starts `Fluxon KV Master`
+- `start_kv_master_process(...)`: starts `Bridging L2–L3 KV Master`
 - `start_owner_kvclient_process(...)`: starts `Owner Client`
 
-The minimal local startup example is `examples/start_master_owner.py`. It only starts Fluxon-native roles and assumes:
+The minimal local startup example is `examples/start_master_owner.py`. It only starts roles native to Bridging L2–L3 and assumes:
 
 - `etcd` at `127.0.0.1:2379`
 - `Greptime` HTTP at `127.0.0.1:34030`
@@ -390,7 +390,7 @@ network:
 ```
 
 Production protocol selection is not configurable. When no test override is present, the public
-bundled Fluxon KV runtime keeps its current default, RDMA. Tests and benchmarks that need protocol
+bundled Bridging L2–L3 KV runtime keeps its current default, RDMA. Tests and benchmarks that need protocol
 selection or fault-isolation switches should use the separate
 .
 

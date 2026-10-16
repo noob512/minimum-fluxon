@@ -2,7 +2,7 @@
 
 ## 稳定结论
 
-Fluxon KV 将存储节点（owner）的本地 SSD 接入既有 key-version 副本体系，作为 DRAM 内存层的运行期回填层（backing store）。`put` 操作在内存副本可读后返回，系统随后在后台异步写入 SSD；`get` 操作优先查询内存，仅在没有可读内存副本时从 SSD 回填。
+Bridging L2–L3 KV 将存储节点（owner）的本地 SSD 接入既有 key-version 副本体系，作为 DRAM 内存层的运行期回填层（backing store）。`put` 操作在内存副本可读后返回，系统随后在后台异步写入 SSD；`get` 操作优先查询内存，仅在没有可读内存副本时从 SSD 回填。
 
 该设计不改变公共契约：用户继续调用 `put`、`get` 和 `delete`，`get` 仍返回 `MemHolder`。master 管理 key-version 级逻辑路由和内存 allocation 生命周期；owner 管理本地 SSD 文件位置、IO 和 ring 驱逐。SSD 不向用户暴露独立 API，也不承担冷启动恢复。
 
@@ -37,7 +37,7 @@ SSD allocation 只负责最终 value 副本，因此只涉及 owner 本地 shard
 
 | 前缀 | 表示的职责 |
 | --- | --- |
-| `external-*` | 集群外的公共 API 调用方或 benchmark 消费方，不贡献 Fluxon 存储容量。 |
+| `external-*` | 集群外的公共 API 调用方或 benchmark 消费方，不贡献 Bridging L2–L3 存储容量。 |
 | `master-*` | master 内的控制面，管理 `route`、in-flight 状态、master 侧 `Allocation` 保活句柄（guard）及 holding 生命周期，不中转 payload。 |
 | `owner-*` | owner 侧的请求入口、内存或 SSD 存储组件，以及本地数据传输端点。多个 `owner-*` 角色可以位于同一 owner 进程，也可以分布在不同 owner。 |
 
@@ -1036,18 +1036,18 @@ sequenceDiagram
 
 ### 8.1 核心结果
 
-- **CPU / GPU 使用同一 pressure 口径**：CPU 主图包含 192 条记录，覆盖原生引用 / handle 与 `bytes`、4 个 payload、4 个并发度、Fluxon、两种 Mooncake 拓扑和 SSD 关/开；GPU 主图包含 72 条记录，覆盖 `cuda`、3 个 payload、4 个并发度、3 种拓扑和 SSD 关/开。264 条记录全部为 `SUCCESS`、0 error、来源完整且 unknown 为 0。
-- **miss 是结果，不是过滤条件**：两侧都使用约 2.5 GiB 数据集和 2 GiB DRAM。柱高只统计 hit payload，红点显示 `hit / (hit + miss)`。SSD-off 的 CPU 命中率为 Fluxon **89.112%–94.390%**、Mooncake 独立 owner **23.759%–66.879%**、Mooncake 每进程 **22.488%–68.655%**；GPU 对应范围为 **89.326%–93.267%**、**34.557%–62.223%** 和 **35.430%–64.782%**。
-- **SSD-on 也保留实际 miss**：CPU 的 Fluxon 和 Mooncake 独立 owner 在 SSD-on 下均为 100% 命中，Mooncake 每进程为 **72.830%–100%**；GPU 对应为 100%、100% 和 **59.855%–100%**。因此 SSD-on/off 柱差同时包含命中集合、介质来源和系统调度差异，不能解释成单一 SSD 开销。
-- **SSD-on 的 hit 同时来自两层**：CPU 中 Fluxon 的 SSD 来源占 hit 的 **17.550%–48.650%**，Mooncake 独立 owner 为 **62.065%–82.385%**，Mooncake 每进程为 **59.341%–83.011%**；GPU 对应为 **20.242%–46.508%**、**64.837%–77.135%** 和 **56.073%–84.198%**。
-- **GPU 多并发已进入同一张主图**：Fluxon 在 SSD-off 下从 c2 到 c16 提高到 5.83、5.83 和 4.68 倍，SSD-on 下提高到 6.50、7.22 和 6.80 倍，分别对应 4、8、16 MiB。Mooncake 的两种拓扑也按相同的六柱顺序展示，不再另画一张来源图。
+- **CPU / GPU 使用同一 pressure 口径**：CPU 主图包含 192 条记录，覆盖原生引用 / handle 与 `bytes`、4 个 payload、4 个并发度、Bridging L2–L3、两种 Mooncake 拓扑和 SSD 关/开；GPU 主图包含 72 条记录，覆盖 `cuda`、3 个 payload、4 个并发度、3 种拓扑和 SSD 关/开。264 条记录全部为 `SUCCESS`、0 error、来源完整且 unknown 为 0。
+- **miss 是结果，不是过滤条件**：两侧都使用约 2.5 GiB 数据集和 2 GiB DRAM。柱高只统计 hit payload，红点显示 `hit / (hit + miss)`。SSD-off 的 CPU 命中率为 Bridging L2–L3 **89.112%–94.390%**、Mooncake 独立 owner **23.759%–66.879%**、Mooncake 每进程 **22.488%–68.655%**；GPU 对应范围为 **89.326%–93.267%**、**34.557%–62.223%** 和 **35.430%–64.782%**。
+- **SSD-on 也保留实际 miss**：CPU 的 Bridging L2–L3 和 Mooncake 独立 owner 在 SSD-on 下均为 100% 命中，Mooncake 每进程为 **72.830%–100%**；GPU 对应为 100%、100% 和 **59.855%–100%**。因此 SSD-on/off 柱差同时包含命中集合、介质来源和系统调度差异，不能解释成单一 SSD 开销。
+- **SSD-on 的 hit 同时来自两层**：CPU 中 Bridging L2–L3 的 SSD 来源占 hit 的 **17.550%–48.650%**，Mooncake 独立 owner 为 **62.065%–82.385%**，Mooncake 每进程为 **59.341%–83.011%**；GPU 对应为 **20.242%–46.508%**、**64.837%–77.135%** 和 **56.073%–84.198%**。
+- **GPU 多并发已进入同一张主图**：Bridging L2–L3 在 SSD-off 下从 c2 到 c16 提高到 5.83、5.83 和 4.68 倍，SSD-on 下提高到 6.50、7.22 和 6.80 倍，分别对应 4、8、16 MiB。Mooncake 的两种拓扑也按相同的六柱顺序展示，不再另画一张来源图。
 - **同路径 Foyer 消融下原生 SSD 仍然更快**：64 条测量记录对应 32 个原生/Foyer 配对，全部为 `SUCCESS`、0 error、0 unknown、0 persist failure，两侧命中率均为 100%。当前 Foyer adapter 的 hit payload 带宽是原生实现的 **14.8%–65.9%**，配对中位数为 **37.2%**，32 个配对中没有胜出；P95 是原生实现的 **2.30–8.46 倍**。这是当前接入路径的结果，不外推为 Foyer 库的通用性能结论。
 
 这些数字只覆盖下文定义的单机、固定容量、Zipf 分布、30 秒窗口和各自 fast path。实验不包括跨机器 RDMA、多物理盘条带化、重复运行的统计置信区间或真实业务 trace。
 
 ### 8.2 计数边界：原生引用 / handle、`bytes` 与 `cuda`
 
-Mooncake 没有 Fluxon 意义上的 holder。`holder` 只是 benchmark 配置 `kv_get_output=holder` 的归一化模式名，Fluxon 和 Mooncake 实际返回 `MemHolder` 与 `BufferHandle`。
+Mooncake 没有 Bridging L2–L3 意义上的 holder。`holder` 只是 benchmark 配置 `kv_get_output=holder` 的归一化模式名，Bridging L2–L3 和 Mooncake 实际返回 `MemHolder` 与 `BufferHandle`。
 
 Mooncake 常规 `Store.get()` 直接返回 Python `bytes`，因此结果包含完整 payload copy。`Store.get_buffer()` 返回 native `BufferHandle`，无需创建 Python `bytes` 即可取得 `ptr()`、`size()` 或 `memoryview`。原生引用 / handle 组把计数边界放在 host 内存引用返回之后。
 
@@ -1067,20 +1067,20 @@ native_ref = result.unwrap()  # Keep the native host reference alive while count
 
 两者只在本次 benchmark 的**计数边界**上对齐，类型语义并不相同：
 
-| 对比维度 | Fluxon | Mooncake | 对齐方式 |
+| 对比维度 | Bridging L2–L3 | Mooncake | 对齐方式 |
 | --- | --- | --- | --- |
 | 实际返回类型 | `MemHolder` | `mooncake.store.BufferHandle` | 本文直接写真实类型，不写“Mooncake holder”。 |
 | 底层调用 | `KvClient.get_blocking()` | `Store.get_buffer()`，由 benchmark adapter 包成 `get_buffer_blocking()` | 都在 native host buffer ready 后返回。 |
 | 数据访问 | `MemHolder.access()` | `ptr()`、`size()`、`memoryview(BufferHandle)` | 原生引用模式不 materialize；bytes / CUDA 模式再继续消费。 |
-| 生命周期语义 | 参与 Fluxon 的 `holder_id`、`get_holding` 和释放流程。 | 由 Mooncake Python binding 的 `BufferHandle` 管理返回 buffer 的生命周期。 | 只要求对象存活到本次操作计数完成。 |
-| 不对齐的部分 | Fluxon holder 协议。 | 没有 Fluxon 的 `holder_id/get_holding/revoke` 协议。 | 不声称 API 或生命周期协议等价。 |
+| 生命周期语义 | 参与 Bridging L2–L3 的 `holder_id`、`get_holding` 和释放流程。 | 由 Mooncake Python binding 的 `BufferHandle` 管理返回 buffer 的生命周期。 | 只要求对象存活到本次操作计数完成。 |
+| 不对齐的部分 | Bridging L2–L3 holder 协议。 | 没有 Bridging L2–L3 的 `holder_id/get_holding/revoke` 协议。 | 不声称 API 或生命周期协议等价。 |
 
-原生引用模式仍然包含后端选择 SSD route 时从 SSD 到 host 的搬运。它只省去随后将完整 payload 物化为 Python `bytes` 的额外 copy。`cuda` 从同一个 native holder 取得 pageable host pointer，再交给 Fluxon 与 Mooncake 共用的双槽 H2D 流水线。只有对应 CUDA event 完成后，这次操作才计为成功。
+原生引用模式仍然包含后端选择 SSD route 时从 SSD 到 host 的搬运。它只省去随后将完整 payload 物化为 Python `bytes` 的额外 copy。`cuda` 从同一个 native holder 取得 pageable host pointer，再交给 Bridging L2–L3 与 Mooncake 共用的双槽 H2D 流水线。只有对应 CUDA event 完成后，这次操作才计为成功。
 
-下图覆盖一次 benchmark `get` 从发起到达到对应计数边界的过程。`external-backend-adapter` 是 benchmark 侧的统一适配层，封装完整的 Fluxon 或 Mooncake get；它不表示两套系统共享 Fluxon 的 owner/master 架构。
+下图覆盖一次 benchmark `get` 从发起到达到对应计数边界的过程。`external-backend-adapter` 是 benchmark 侧的统一适配层，封装完整的 Bridging L2–L3 或 Mooncake get；它不表示两套系统共享 Bridging L2–L3 的 owner/master 架构。
 
 - **`external-benchmark-worker`**：发起 KV get，按 `holder/bytes/cuda` 模式消费结果，并在该模式的完成点计数。
-- **`external-backend-adapter`**：在同一调用面上包住 Fluxon 或 Mooncake 的完整 get，并返回已驻留 host 的 `MemHolder` 或 `BufferHandle`。
+- **`external-backend-adapter`**：在同一调用面上包住 Bridging L2–L3 或 Mooncake 的完整 get，并返回已驻留 host 的 `MemHolder` 或 `BufferHandle`。
 - **`external-host-output`**：表示 pageable host 上的 native reference 生命周期，以及 `bytes` 模式的完整 payload 物化。
 - **`external-pinned-slot`**：每个 benchmark worker 复用的两个 pinned host slot 之一。
 - **`external-cuda-runtime`**：对应 slot 的 CUDA stream 和 event，负责 `cudaMemcpyAsync` 提交与完成通知。
@@ -1124,7 +1124,7 @@ sequenceDiagram
     end
 ```
 
-| benchmark 输出模式 | Fluxon 映射 | Mooncake 映射 | 共同计数边界 |
+| benchmark 输出模式 | Bridging L2–L3 映射 | Mooncake 映射 | 共同计数边界 |
 | --- | --- | --- | --- |
 | `holder`（归一化模式名） | `get_blocking()` 返回 `MemHolder`。 | `get_buffer_blocking()` 调用 Mooncake `Store.get_buffer()`，返回 `BufferHandle`；该对象暴露 `ptr()`、`size()` 和 buffer protocol。 | 原生引用已返回；不创建完整 Python `bytes`。 |
 | `bytes` | `MemHolder.access()` 解码出 payload `bytes`，校验长度并触碰首尾字节。 | 从 `memoryview(BufferHandle)` 定位 payload，再调用 `bytes(...)` 完整复制，校验长度并触碰首尾字节。 | 完整 Python `bytes` 已生成；不含 GPU copy。 |
@@ -1134,10 +1134,10 @@ sequenceDiagram
 
 | 后端 | DRAM / SSD 归因方式 | 完整性判定 | 边界 |
 | --- | --- | --- | --- |
-| Fluxon | Rust get 路径保留 `GetSourceKind::Memory` / `GetSourceKind::Ssd`，经 external holder 传到 benchmark；每个成功操作单独计数。 | 每个 hit 都必须有且只有一个 source kind。 | 表示本次 get 选中并完成的 route source；它不是 NVMe 设备层 IO trace。 |
+| Bridging L2–L3 | Rust get 路径保留 `GetSourceKind::Memory` / `GetSourceKind::Ssd`，经 external holder 传到 benchmark；每个成功操作单独计数。 | 每个 hit 都必须有且只有一个 source kind。 | 表示本次 get 选中并完成的 route source；它不是 NVMe 设备层 IO trace。 |
 | Mooncake | 在统计窗口起止点采样 `get_offload_rpc_read_count()`；`0.3.11.post1` 的单 key `get_buffer()` 在选中 `LOCAL_DISK` 后会进入唯一的 offload-RPC 计数入口。counter 增量记为 SSD hit，成功 hit 减该增量记为 DRAM hit。 | counter 必须单调，增量不能超过该节点成功 hit。 | 这是窗口 counter 推断。本次 CPU 和 GPU 有效记录的采样时刻与窗口边界最大偏差分别为 13.047 ms 和 1.912 ms。 |
 
-Fluxon / Mooncake coordinator 只在每个节点的 `memory + ssd + unknown == hit`、观测完整且 `unknown == 0` 时发布完整来源结果。如果任一节点的计数不自洽，该节点的全部 hit 都归入 unknown，不根据剩余量猜测来源。miss 不分配 DRAM / SSD source，单独进入命中率分母。CPU 的 192 条记录和 GPU 的 72 条记录均为完整来源、unknown 为 0。
+Bridging L2–L3 / Mooncake coordinator 只在每个节点的 `memory + ssd + unknown == hit`、观测完整且 `unknown == 0` 时发布完整来源结果。如果任一节点的计数不自洽，该节点的全部 hit 都归入 unknown，不根据剩余量猜测来源。miss 不分配 DRAM / SSD source，单独进入命中率分母。CPU 的 192 条记录和 GPU 的 72 条记录均为完整来源、unknown 为 0。
 
 分层逻辑读带宽是整个统计窗口的平均值：`tier logical read GiB/s = tier hit 数 × 原始 payload bytes ÷ 窗口秒数 ÷ 2^30`。CPU 和 GPU 的统计窗口均为 30 秒。本次实验使用固定 payload，因此可以从来源操作数精确换算逻辑读取量。柱高不包含 miss；红点使用 `hit ÷ (hit + miss)`，两者共同描述本次 pressure workload。
 
@@ -1163,17 +1163,17 @@ CPU 和 GPU 主图统一使用 SSD-pressure 数据集：数据集约 2.5 GiB，D
 
 | 组别 | DRAM 存储贡献 / 原始数据集 | payload / keyspace | worker 布局 | 总时长 / warmup / 统计窗口 |
 | --- | --- | --- | --- | --- |
-| CPU Fluxon / Mooncake pressure | 2 GiB / 约 2.5 GiB | `1/4/8/16 MiB - 128 B` / `2560/640/320/160`；原生引用 / `bytes` | c2=`1×2`、c4=`1×4`、c8=`2×4`、c16=`4×4` | 35 / 5 / 30 s |
-| CPU Fluxon SSD backend 消融 | 2 GiB / 约 2.5 GiB；两侧再配置 16 GiB SSD | 与 CPU pressure 相同；`MemHolder` / `bytes` | 与 CPU Fluxon / Mooncake pressure 相同 | 35 / 5 / 30 s |
+| CPU Bridging L2–L3 / Mooncake pressure | 2 GiB / 约 2.5 GiB | `1/4/8/16 MiB - 128 B` / `2560/640/320/160`；原生引用 / `bytes` | c2=`1×2`、c4=`1×4`、c8=`2×4`、c16=`4×4` | 35 / 5 / 30 s |
+| CPU Bridging L2–L3 SSD backend 消融 | 2 GiB / 约 2.5 GiB；两侧再配置 16 GiB SSD | 与 CPU pressure 相同；`MemHolder` / `bytes` | 与 CPU Bridging L2–L3 / Mooncake pressure 相同 | 35 / 5 / 30 s |
 | GPU pressure 开关矩阵 | 2 GiB / 约 2.5 GiB | `4/8/16 MiB - 128 B` / `640/320/160`；`cuda` | c2=`1×2`、c4=`1×4`、c8=`2×4`、c16=`4×4` | 35 / 5 / 30 s |
 
-主图使用的 Fluxon wheel SHA-256 前缀为 `11118d3`，Mooncake 为 `0.3.11.post1`。同路径 SSD backend 消融使用 Fluxon wheel SHA-256 前缀 `4896d0e`，其中集成 Foyer 0.22.3 作为 test-only owner backend。后文的早期 GPU SSD 写盘证据使用 Fluxon wheel SHA-256 前缀 `54de857`，不与主图或 backend 消融记录合并。
+主图使用的 Bridging L2–L3 wheel SHA-256 前缀为 `11118d3`，Mooncake 为 `0.3.11.post1`。同路径 SSD backend 消融使用 Bridging L2–L3 wheel SHA-256 前缀 `4896d0e`，其中集成 Foyer 0.22.3 作为 test-only owner backend。后文的早期 GPU SSD 写盘证据使用 Bridging L2–L3 wheel SHA-256 前缀 `54de857`，不与主图或 backend 消融记录合并。
 
-表中的 DRAM 存储贡献是 KV 可分配容量，不等同于进程 RSS。主图对齐的是 2 GiB 逻辑 value 容量和 16 GiB 逻辑 SSD 容量；Fluxon 与 Mooncake 的 envelope、allocator、索引和元数据不同，物理 DRAM 占用并不相等。逻辑 payload 带宽也不包含后端编码和元数据。
+表中的 DRAM 存储贡献是 KV 可分配容量，不等同于进程 RSS。主图对齐的是 2 GiB 逻辑 value 容量和 16 GiB 逻辑 SSD 容量；Bridging L2–L3 与 Mooncake 的 envelope、allocator、索引和元数据不同，物理 DRAM 占用并不相等。逻辑 payload 带宽也不包含后端编码和元数据。
 
-同路径 SSD backend 消融中的 2 GiB 仍是 Fluxon owner 上层 DRAM。集成 Foyer 另外保留 1 B 内部 memory capacity，并关闭该层的 memory admission；这 1 B 不替代或扣减 Fluxon 的 2 GiB DRAM。
+同路径 SSD backend 消融中的 2 GiB 仍是 Bridging L2–L3 owner 上层 DRAM。集成 Foyer 另外保留 1 B 内部 memory capacity，并关闭该层的 memory admission；这 1 B 不替代或扣减 Bridging L2–L3 的 2 GiB DRAM。
 
-CPU 和 GPU 的 cN 都表示所有 benchmark 进程合计 N 个 worker 线程。Fluxon / Mooncake 的 c8 和 c16 分别使用 2 个和 4 个 benchmark 进程，因此结果同时包含多进程绕开 Python GIL 后带来的并行度；GPU 每个线程固定复用两个 pinned host、stream、event 和 device buffer slot。
+CPU 和 GPU 的 cN 都表示所有 benchmark 进程合计 N 个 worker 线程。Bridging L2–L3 / Mooncake 的 c8 和 c16 分别使用 2 个和 4 个 benchmark 进程，因此结果同时包含多进程绕开 Python GIL 后带来的并行度；GPU 每个线程固定复用两个 pinned host、stream、event 和 device buffer slot。
 
 CPU 和 GPU 主图中的 Mooncake 都覆盖两种拓扑：
 
@@ -1182,7 +1182,7 @@ CPU 和 GPU 主图中的 Mooncake 都覆盖两种拓扑：
 
 在 SSD-on 侧，每个 storage instance 使用独立 SSD 目录，但都位于同一块 Samsung NVMe 上。两种拓扑从 c2 到 c16 都保持 2 GiB DRAM + 16 GiB SSD 的集群逻辑总容量；SSD-off 侧保持同样的 2 GiB DRAM，去掉 16 GiB SSD 贡献。
 
-Fluxon / Mooncake 每个拓扑的两侧使用相同的 DRAM 贡献、pressure 数据集、requester buffer、worker 布局和 transport。排除用于隔离 case 的 cluster ID、目录和端口后，Fluxon 只增删 owner `owner_kv_ssd`；Mooncake 只增删 `--enable_offload=true` 和 16 GiB SSD 贡献。
+Bridging L2–L3 / Mooncake 每个拓扑的两侧使用相同的 DRAM 贡献、pressure 数据集、requester buffer、worker 布局和 transport。排除用于隔离 case 的 cluster ID、目录和端口后，Bridging L2–L3 只增删 owner `owner_kv_ssd`；Mooncake 只增删 `--enable_offload=true` 和 16 GiB SSD 贡献。
 
 Mooncake 的 CPU requester buffer 在 SSD 关/开两侧均为 256 MiB，GPU 每个 benchmark 进程两侧均为 2 GiB。两侧也都使用 `tcp_pool_nodelay_backport`。
 
@@ -1196,35 +1196,35 @@ Mooncake 的 CPU requester buffer 在 SSD 关/开两侧均为 256 MiB，GPU 每�
 
 Mooncake SSD offload 的单 slice 上限是 `0xFFFFF0` bytes。CPU 和 GPU 的 16 MiB 组都将 benchmark payload 减去 128 bytes，加入 91-byte FlatDict envelope 后仍低于该上限。
 
-Fluxon / Mooncake 主图和 Fluxon SSD backend 消融均关闭 capacity guard，Mooncake 的 eviction high watermark 设为 0.80。SSD 容量不是这些实验的限制因素。主图只纳入状态为 `SUCCESS`、0 error、来源计数完整且 unknown 为 0 的运行；pressure 中的 miss 在 SSD 关/开两侧都保留并进入命中率。
+Bridging L2–L3 / Mooncake 主图和 Bridging L2–L3 SSD backend 消融均关闭 capacity guard，Mooncake 的 eviction high watermark 设为 0.80。SSD 容量不是这些实验的限制因素。主图只纳入状态为 `SUCCESS`、0 error、来源计数完整且 unknown 为 0 的运行；pressure 中的 miss 在 SSD 关/开两侧都保留并进入命中率。
 
 ### 8.4 CPU 性能对比：`MemHolder` / `BufferHandle` 与 `bytes`
 
-下图的两行分别是原生引用 / handle 和 `bytes`，四列分别是 1/4/8/16 MiB。每个 payload 分面覆盖 c2/c4/c8/c16；每个并发度固定按 Fluxon、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青分别区分三种实现组，浅色表示 DRAM、深色表示 SSD，红点使用右轴表示总命中率。各 payload 分面使用独立左轴，范围写在右上角。
+下图的两行分别是原生引用 / handle 和 `bytes`，四列分别是 1/4/8/16 MiB。每个 payload 分面覆盖 c2/c4/c8/c16；每个并发度固定按 Bridging L2–L3、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青分别区分三种实现组，浅色表示 DRAM、深色表示 SSD，红点使用右轴表示总命中率。各 payload 分面使用独立左轴，范围写在右上角。
 
 CPU 的 192 条记录覆盖 `2 输出模式 × 4 payload × 4 并发度 × 3 实现组 × 2 SSD 状态`。`fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_cpu_sweep.py` 与 GPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。输入文件按命令行顺序覆盖同 case key；最终矩阵缺一条、存在 error、来源不完整或 unknown 非零都会直接失败。
 
 | 实现组 | SSD-off 命中率 | SSD-on 命中率 | SSD-on 中 SSD 来源占 hit |
 | --- | --- | --- | --- |
-| Fluxon | 89.112%–94.390% | 100% | 17.550%–48.650% |
+| Bridging L2–L3 | 89.112%–94.390% | 100% | 17.550%–48.650% |
 | Mooncake 独立 owner | 23.759%–66.879% | 100% | 62.065%–82.385% |
 | Mooncake 每进程 | 22.488%–68.655% | 72.830%–100% | 59.341%–83.011% |
 
 结果支持三个直接判断：
 
 - **命中率和 hit payload 带宽必须一起看**：SSD-off 会产生快速 miss；Mooncake 每进程的部分 SSD-on case 也有 miss。柱高不包含这些 miss，因此单看柱高会遗漏成功集合的变化。
-- **开关差不是单项 SSD 开销**：Fluxon 原生引用的 SSD-on hit 带宽相对 SSD-off 变化为 -88.8%–-21.1%，`bytes` 为 -45.8%–+2.2%；Mooncake 两种拓扑同时包含正负变化。差值混合了命中率、DRAM/SSD 来源、回填、输出物化和调度，不能拆成一个内部阶段。
+- **开关差不是单项 SSD 开销**：Bridging L2–L3 原生引用的 SSD-on hit 带宽相对 SSD-off 变化为 -88.8%–-21.1%，`bytes` 为 -45.8%–+2.2%；Mooncake 两种拓扑同时包含正负变化。差值混合了命中率、DRAM/SSD 来源、回填、输出物化和调度，不能拆成一个内部阶段。
 - **输出模式需要分开比较**：原生引用 / handle 在 host reference ready 时计数，`bytes` 还包含完整 payload 物化。两行都按每次 hit 的完整逻辑 payload 计带宽；handle 行并没有读取或复制同等字节，因此其数值可以超过物理 DRAM 带宽，不能跨行用柱高计算复制效率或模式倍率。
 
 统计窗口内只有 get，因此已完成记录的 DRAM 和 SSD 逻辑写带宽均为 `0.000 GiB/s`。图中报告逻辑 payload 流量，不代表物理 DRAM 或 NVMe 带宽。
 
-#### 8.4.1 同一 Fluxon 路径下的 SSD backend 消融
+#### 8.4.1 同一 Bridging L2–L3 路径下的 SSD backend 消融
 
 [Foyer](https://github.com/foyer-rs/foyer/tree/v0.22.3) 是一个面向高性能和高并发场景的 Rust 内存/磁盘混合缓存库。它的 `HybridCache` 在一套接口下组合内存 cache 与磁盘 storage，并提供块式磁盘引擎、可替换的缓存算法和 IO engine。
 
-对 Fluxon 而言，Foyer 是一个现成的通用实现参照。这组消融为一个直接的工程取舍提供依据：Fluxon 原生 SSD backend 在目标 workload 和既有数据路径中的功能与性能表现，是否足以支持继续自研和维护。若通用库已经满足需求，直接复用 Foyer 可以减少存储引擎本身的开发与维护。
+对 Bridging L2–L3 而言，Foyer 是一个现成的通用实现参照。这组消融为一个直接的工程取舍提供依据：Bridging L2–L3 原生 SSD backend 在目标 workload 和既有数据路径中的功能与性能表现，是否足以支持继续自研和维护。若通用库已经满足需求，直接复用 Foyer 可以减少存储引擎本身的开发与维护。
 
-要比较 SSD 存储层，不能直接把 Fluxon 的整套 cache 替换掉。Fluxon 的内存路径同时包含 master `route`、owner DRAM 副本、allocation 与 holder 生命周期、跨 owner 传输，以及 SSD 回填后的 promotion。如果连上层内存 cache 也替换为 Foyer，公共语义和数据路径会一起改变，结果无法归因到 SSD backend。因此，实验保留 Fluxon 的内存层及其上层路径，将替换边界统一收敛到 owner 内部的 `KvSsdStorage`：一侧使用 Fluxon 原生的 SSD 持久化与读取实现，另一侧接入 Foyer `HybridCache` 的 storage tier，并关闭 Foyer 自身的 memory admission。
+要比较 SSD 存储层，不能直接把 Bridging L2–L3 的整套 cache 替换掉。Bridging L2–L3 的内存路径同时包含 master `route`、owner DRAM 副本、allocation 与 holder 生命周期、跨 owner 传输，以及 SSD 回填后的 promotion。如果连上层内存 cache 也替换为 Foyer，公共语义和数据路径会一起改变，结果无法归因到 SSD backend。因此，实验保留 Bridging L2–L3 的内存层及其上层路径，将替换边界统一收敛到 owner 内部的 `KvSsdStorage`：一侧使用 Bridging L2–L3 原生的 SSD 持久化与读取实现，另一侧接入 Foyer `HybridCache` 的 storage tier，并关闭 Foyer 自身的 memory admission。
 
 Foyer 分支通过 test-only 配置启用：
 
@@ -1233,18 +1233,18 @@ test_spec_config:
   kv_ssd_storage_backend: foyer
 ```
 
-默认值仍为 `native`。Foyer 分支当前只接受一个 SSD root，并在配置阶段拒绝 `kv_ssd_uring_mode: iovec`。两组都调用相同的公共 KV API，经过相同的 FlatDict、route、transport、PyO3/GIL 边界和 benchmark 进程布局；写入 SSD backend 的都是 Fluxon target 中包含 FlatDict envelope 的完整编码 value。owner 上层 DRAM 都是 2 GiB，SSD 都是 16 GiB，且两种 SSD backend 都使用 direct I/O。图中的逻辑带宽仍只按原始 payload bytes 计数。
+默认值仍为 `native`。Foyer 分支当前只接受一个 SSD root，并在配置阶段拒绝 `kv_ssd_uring_mode: iovec`。两组都调用相同的公共 KV API，经过相同的 FlatDict、route、transport、PyO3/GIL 边界和 benchmark 进程布局；写入 SSD backend 的都是 Bridging L2–L3 target 中包含 FlatDict envelope 的完整编码 value。owner 上层 DRAM 都是 2 GiB，SSD 都是 16 GiB，且两种 SSD backend 都使用 direct I/O。图中的逻辑带宽仍只按原始 payload bytes 计数。
 
-Foyer 内部另设 1 B memory capacity、1 个 memory shard，并用 filter 关闭 memory admission。这里关闭的是 SSD backend 内部可能形成的额外内存层，不影响 Fluxon owner 的 2 GiB DRAM。专项测试在 persist 和重复 get 后观测到 Foyer memory usage 为 0，所有读取来源均为 Foyer storage tier。
+Foyer 内部另设 1 B memory capacity、1 个 memory shard，并用 filter 关闭 memory admission。这里关闭的是 SSD backend 内部可能形成的额外内存层，不影响 Bridging L2–L3 owner 的 2 GiB DRAM。专项测试在 persist 和重复 get 后观测到 Foyer memory usage 为 0，所有读取来源均为 Foyer storage tier。
 
-| 对比项 | Fluxon 原生 SSD | Fluxon Foyer SSD |
+| 对比项 | Bridging L2–L3 原生 SSD | Bridging L2–L3 Foyer SSD |
 | --- | --- | --- |
-| SSD 组织 | Fluxon ring、定长 shard 和 `io_uring`。 | Foyer 0.22.3 `HybridCache`，`WriteOnInsertion`、`PsyncIoEngine` 和 64 MiB block。 |
-| 读取落点 | 满足对齐条件时直接读入 Fluxon target；远端路径可让 SSD chunk read 与 push 重叠。 | Foyer 先返回包含完整 value 的 `Vec<u8>`，再复制到 Fluxon target；远端路径取得完整 value 后才逐 chunk 交给 push。 |
+| SSD 组织 | Bridging L2–L3 ring、定长 shard 和 `io_uring`。 | Foyer 0.22.3 `HybridCache`，`WriteOnInsertion`、`PsyncIoEngine` 和 64 MiB block。 |
+| 读取落点 | 满足对齐条件时直接读入 Bridging L2–L3 target；远端路径可让 SSD chunk read 与 push 重叠。 | Foyer 先返回包含完整 value 的 `Vec<u8>`，再复制到 Bridging L2–L3 target；远端路径取得完整 value 后才逐 chunk 交给 push。 |
 | persist 并发 | 使用原生 writer queue 和 device worker。 | forced storage admission；`enqueue → wait → may_contains` 串行化，避免 Foyer byte queue 满时静默丢弃写入。 |
 | 驱逐收敛 | ring 覆盖后批量通知 master 删除对应 SSD route。 | Foyer 0.22.3 没有向当前集成暴露等价的 SSD eviction callback；陈旧 route 只能在读取失败时撤销。 |
 
-这个 workload 在 bootstrap 后只读，因此 Foyer persist 串行化不进入 30 秒统计窗口。约 2.5 GiB 数据集也小于 16 GiB SSD 容量；本次结果不评估 Foyer 容量驱逐后的 route 收敛。图中的浅色仍表示 Fluxon 上层 DRAM route，深色表示 Fluxon SSD route；它不把 Foyer 内部 memory cache 作为第三层来源。
+这个 workload 在 bootstrap 后只读，因此 Foyer persist 串行化不进入 30 秒统计窗口。约 2.5 GiB 数据集也小于 16 GiB SSD 容量；本次结果不评估 Foyer 容量驱逐后的 route 收敛。图中的浅色仍表示 Bridging L2–L3 上层 DRAM route，深色表示 Bridging L2–L3 SSD route；它不把 Foyer 内部 memory cache 作为第三层来源。
 
 图按 `MemHolder` / `bytes` 分成两行，每行覆盖 1 / 4 / 8 / 16 MiB；每个并发度放置原生与 Foyer 两根柱。蓝/紫区分 SSD 实现，浅/深区分 DRAM 与 SSD 来源，红点表示命中率。
 
@@ -1252,7 +1252,7 @@ PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_foyer_ablation.py` 
 
 所有配对的命中率都是 100%，因此这组差距没有 miss 数量优势可以解释。P95 的同向变化表明差距同时出现在延迟侧。`bytes` 会在两侧共同追加完整 payload 物化，其中位比值高于 `MemHolder` 与公共物化成本稀释 backend 相对差异相容，但单次矩阵不足以分解这部分因果贡献。
 
-当前两条读取路径的明确差异是：Foyer adapter 先取得完整 `Vec<u8>` 再复制到 Fluxon target；原生实现可以直接读入 target，远端时还保留 chunk read 与 push 重叠。同时还存在 `PsyncIoEngine` / `io_uring`、完整 value 交付和调度方式等差异。这些差异共同属于当前 adapter 对比，本次数据无法把柱高差逐项分配给某个内部阶段。
+当前两条读取路径的明确差异是：Foyer adapter 先取得完整 `Vec<u8>` 再复制到 Bridging L2–L3 target；原生实现可以直接读入 target，远端时还保留 chunk read 与 push 重叠。同时还存在 `PsyncIoEngine` / `io_uring`、完整 value 交付和调度方式等差异。这些差异共同属于当前 adapter 对比，本次数据无法把柱高差逐项分配给某个内部阶段。
 
 配对 case 对相同的 thread id 和 operation index 使用同一套确定性 Zipf key 选择。统计边界仍是固定 30 秒窗口，不是固定操作数；较慢的一侧会停在同一确定性序列的更短前缀，实测 DRAM/SSD 来源比例也可能随之变化。因此，这组数据回答指定 pressure workload 下的整体 backend 表现，不把柱高比值解释成单次纯 SSD get 的加速比。
 
@@ -1260,13 +1260,13 @@ PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_foyer_ablation.py` 
 
 上一节的 CPU 测试以 KV 数据到达 CPU 内存为计数终点，分别观察原生引用 / handle 和完整 `bytes` 物化。AI 推理或训练实际消费 KV 数据时，数据通常还需要继续搬到 GPU。因此，本节把计数终点延伸到对应 CUDA event 完成，比较多并发下 SSD 开关和 Mooncake 两种存储拓扑对 GPU 可用数据吞吐的影响。该边界包含 H2D 传输，不包含 GPU kernel 执行或 D2H。
 
-GPU 与 CPU 使用同一种画法，只少了原生引用 / `bytes` 两行。4、8、16 MiB 各占一个分面；每个分面都覆盖 c2/c4/c8/c16，每个并发度再按 Fluxon、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青区分三种实现，浅色表示 DRAM、深色表示 SSD，红点显示命中率；六组 case 都从 native host buffer 进入同一条 `cuda` H2D 路径。
+GPU 与 CPU 使用同一种画法，只少了原生引用 / `bytes` 两行。4、8、16 MiB 各占一个分面；每个分面都覆盖 c2/c4/c8/c16，每个并发度再按 Bridging L2–L3、Mooncake 独立 owner、Mooncake 每进程 × SSD 关/开排列六根柱。蓝、橙、青区分三种实现，浅色表示 DRAM、深色表示 SSD，红点显示命中率；六组 case 都从 native host buffer 进入同一条 `cuda` H2D 路径。
 
 GPU PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_gpu_sweep.py` 读取一个或多个 pressure 汇总，并与 CPU 脚本共同调用同目录下的 `kv_ssd_pressure_chart.py`。脚本校验最终 72 条记录完整后直接使用 Pillow 绘制；各 payload 分面使用独立左轴，命中率共用 0%–100% 右轴。
 
 | 拓扑 | SSD-off 命中率 | SSD-on 命中率 | SSD-on 中 SSD 来源占 hit |
 | --- | --- | --- | --- |
-| Fluxon | 89.326%–93.267% | 100% | 20.242%–46.508% |
+| Bridging L2–L3 | 89.326%–93.267% | 100% | 20.242%–46.508% |
 | Mooncake 独立 owner | 34.557%–62.223% | 100% | 64.837%–77.135% |
 | Mooncake 每进程 | 35.430%–64.782% | 59.855%–100% | 56.073%–84.198% |
 
@@ -1274,26 +1274,26 @@ GPU PNG 由 `fluxon_test_stack/single_node_ssd_bench/plot_kv_ssd_gpu_sweep.py` �
 
 | 拓扑 | SSD-off c16/c2 | SSD-on c16/c2 |
 | --- | --- | --- |
-| Fluxon | 5.83 / 5.83 / 4.68 倍 | 6.50 / 7.22 / 6.80 倍 |
+| Bridging L2–L3 | 5.83 / 5.83 / 4.68 倍 | 6.50 / 7.22 / 6.80 倍 |
 | Mooncake 独立 owner | 1.33 / 1.50 / 1.10 倍 | 1.73 / 1.37 / 1.35 倍 |
 | Mooncake 每进程 | 2.67 / 2.01 / 1.23 倍 | 3.02 / 2.07 / 1.77 倍 |
 
-Fluxon 的 SSD-on hit 带宽相对 SSD-off 变化为 -54.6%–-27.9%，Mooncake 独立 owner 为 -32.0%–+37.3%，Mooncake 每进程为 -62.6%–-17.5%。这些变化必须与上表的命中率一起解释。c16 下，每进程相对独立 owner 的 hit 带宽在 SSD-off 下分别高 125.7%、107.3% 和 97.9%，SSD-on 下高 82.4%、64.5% 和 57.9%；这些是包含 endpoint 本地性、进程数和 transport 调度的整体拓扑结果，不能归因到单个内部环节。
+Bridging L2–L3 的 SSD-on hit 带宽相对 SSD-off 变化为 -54.6%–-27.9%，Mooncake 独立 owner 为 -32.0%–+37.3%，Mooncake 每进程为 -62.6%–-17.5%。这些变化必须与上表的命中率一起解释。c16 下，每进程相对独立 owner 的 hit 带宽在 SSD-off 下分别高 125.7%、107.3% 和 97.9%，SSD-on 下高 82.4%、64.5% 和 57.9%；这些是包含 endpoint 本地性、进程数和 transport 调度的整体拓扑结果，不能归因到单个内部环节。
 
 主矩阵体现了三个结果：
 
-- **Fluxon 能随并发扩展**：4、8、16 MiB 从 c2 到 c16 分别提高到 7.18、7.68 和 5.33 倍。
+- **Bridging L2–L3 能随并发扩展**：4、8、16 MiB 从 c2 到 c16 分别提高到 7.18、7.68 和 5.33 倍。
 - **16 MiB 在 c8 后开始收益递减**：c8 到 c16 只再提高 14.0%，backend get 均值从 `3.082 ms` 增至 `7.367 ms`，P95 从 `24.007 ms` 增至 `51.150 ms`。H2D 之前的路径已开始制约吞吐。
 - **Mooncake 拓扑会影响结果**：每进程贡献模式在 c16 下相对独立 owner 分别提高 91.3%、103.7% 和 66.8%。两种模式的逻辑容量相同，差异主要出现在 GPU copy 之前。来源诊断显示 8/16 MiB 的每进程贡献模式具有更高 SSD 命中率，因此更高吞吐无法由更高 DRAM 命中率解释；独立 owner 串行点、endpoint 本地性和 transport 调度成本仍未拆分。
 
-c16 下，Fluxon 相对两种 Mooncake 拓扑中更快的一种，在 4、8、16 MiB 组中分别为 3.83、5.61 和 6.73 倍。这些比值只覆盖第 8.2–8.3 节定义的计数边界、单机 fast path 和固定容量。
+c16 下，Bridging L2–L3 相对两种 Mooncake 拓扑中更快的一种，在 4、8、16 MiB 组中分别为 3.83、5.61 和 6.73 倍。这些比值只覆盖第 8.2–8.3 节定义的计数边界、单机 fast path 和固定容量。
 
 ## 9. 设计结论
 
-Fluxon KV 将本地 SSD 定位为运行期回填层，不改变用户侧 `put`、`get` 和 `delete` 契约。master 维护 key-version 级 `route`，并统一调度用于最终 value 副本和临时传输的内存 allocation。owner 承载真实 bytes，管理 SSD 文件位置、IO 和 ring 生命周期。
+Bridging L2–L3 KV 将本地 SSD 定位为运行期回填层，不改变用户侧 `put`、`get` 和 `delete` 契约。master 维护 key-version 级 `route`，并统一调度用于最终 value 副本和临时传输的内存 allocation。owner 承载真实 bytes，管理 SSD 文件位置、IO 和 ring 生命周期。
 
 `put` 操作在内存副本发布后返回，SSD persist 在后台完成。`get` 操作优先读取内存。没有可读内存副本时，本地 SSD 回填复用 requester target，远端回填则按 chunk 从 source staging push 到 requester target。两条路径最后都进入同一个 `GetDone` 和 holder 交付链。
 
-同路径消融进一步表明，在本文固定的 pressure workload 下，当前 Foyer adapter 的 hit payload 带宽中位数为原生 SSD 的 37.2%，P95 为 2.30–8.46 倍，32 个配对中没有胜出。两侧均为 100% 命中，但 Foyer adapter 多了完整 `Vec<u8>` 到 Fluxon target 的复制，也没有原生路径的 direct-target 与 chunk read/push 重叠。这一结果限定于当前 adapter，不代表 Foyer 库的一般性能。
+同路径消融进一步表明，在本文固定的 pressure workload 下，当前 Foyer adapter 的 hit payload 带宽中位数为原生 SSD 的 37.2%，P95 为 2.30–8.46 倍，32 个配对中没有胜出。两侧均为 100% 命中，但 Foyer adapter 多了完整 `Vec<u8>` 到 Bridging L2–L3 target 的复制，也没有原生路径的 direct-target 与 chunk read/push 重叠。这一结果限定于当前 adapter，不代表 Foyer 库的一般性能。
 
 当前 SSD 层不提供冷启动恢复，也不向用户暴露独立 API。专项测试验证了强制回填和陈旧 route 兜底，并报告限定条件下的端到端逻辑 payload 表现。这些结果不代表裸 SSD 带宽，也不外推到跨机器、多 owner 或多盘场景。
